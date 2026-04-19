@@ -5,6 +5,7 @@
 
 import { resolveVoiceId, type TellMeConfig } from "./config.js";
 import { getKokoroPaths, getPiperPlPaths } from "./model-manager.js";
+import { trimSilence } from "./audio-player.js";
 import type { DetectedLanguage } from "./language-detect.js";
 
 // sherpa-onnx-node loaded dynamically to handle optional dep
@@ -145,20 +146,29 @@ export class TellMeTts {
 	/**
 	 * Generate audio for an array of text chunks, calling onChunk
 	 * after each one so the caller can stream to a speaker.
-	 * Returns when all chunks have been generated (playback may still
-	 * be draining in the speaker buffer).
+	 * Async — yields to event loop between chunks so UI updates
+	 * render and speaker buffers can drain.
 	 */
-	generateChunked(
+	async generateChunked(
 		chunks: string[],
 		language: DetectedLanguage,
 		onChunk: (samples: Float32Array) => void,
 		shouldStop?: () => boolean,
-	): { sampleRate: number } {
+	): Promise<{ sampleRate: number }> {
 		const { engine, speakerId } = this.getEngine(language);
-		for (const chunk of chunks) {
+		for (let i = 0; i < chunks.length; i++) {
 			if (shouldStop?.()) break;
-			const samples = engine.generate(chunk, this.config.speed, speakerId);
+			// Yield to event loop so UI renders and speaker drains
+			await new Promise(resolve => setImmediate(resolve));
+			let samples = engine.generate(chunks[i], this.config.speed, speakerId);
 			if (shouldStop?.()) break;
+			// Trim silence at chunk boundaries to avoid audible gaps:
+			// - First chunk: keep leading silence, trim trailing
+			// - Last chunk: trim leading silence, keep trailing
+			// - Middle chunks: trim both sides
+			const isFirst = i === 0;
+			const isLast = i === chunks.length - 1;
+			samples = trimSilence(samples, !isFirst, !isLast);
 			onChunk(samples);
 		}
 		return { sampleRate: engine.sampleRate };

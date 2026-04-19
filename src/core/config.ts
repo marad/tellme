@@ -20,7 +20,7 @@ export const DEFAULT_CONFIG: TellMeConfig = {
 	modelsDir: join(homedir(), ".tellme", "models"),
 	language: "auto",
 	enVoice: "af_bella",
-	plModel: "darkman-medium",
+	plModel: "gosia-medium",
 	speed: 1.0,
 	autoRead: false,
 };

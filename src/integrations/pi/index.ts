@@ -106,7 +106,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 
 					currentPlayback = { done: player.done, stop: () => player.stop() };
 
-					engine.generateChunked(chunks, language,
+					await engine.generateChunked(chunks, language,
 						(samples) => {
 							current++;
 							statusUpdater?.(`🔊 ▶ streaming ${langLabel} [${current}/${total}]`);

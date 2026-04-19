@@ -176,7 +176,7 @@ async function main() {
 	});
 
 	if (player) {
-		tts.generateChunked(chunks, language,
+		await tts.generateChunked(chunks, language,
 			(samples) => player.write(samples),
 			() => stopped,
 		);

@@ -3,10 +3,19 @@
   "version": "0.1.0",
   "description": "Local TTS for coding agents — read AI responses aloud. Supports Pi, Claude Code, and OpenCode.",
   "type": "module",
-  "keywords": ["pi-package", "tts", "text-to-speech", "kokoro", "piper", "coding-agent"],
+  "keywords": [
+    "pi-package",
+    "tts",
+    "text-to-speech",
+    "kokoro",
+    "piper",
+    "coding-agent"
+  ],
   "license": "MIT",
   "pi": {
-    "extensions": ["./src/integrations/pi/index.ts"]
+    "extensions": [
+      "./src/integrations/pi/index.ts"
+    ]
   },
   "bin": {
     "tellme": "./bin/tellme.js"
@@ -16,15 +25,21 @@
     "clean": "echo 'nothing to clean'"
   },
   "dependencies": {
-    "sherpa-onnx-node": "^1.12.38",
-    "speaker": "^0.5.5"
+    "sherpa-onnx-node": "^1.12.38"
   },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*",
     "@sinclair/typebox": "*"
   },
   "peerDependenciesMeta": {
-    "@mariozechner/pi-coding-agent": { "optional": true },
-    "@sinclair/typebox": { "optional": true }
+    "@mariozechner/pi-coding-agent": {
+      "optional": true
+    },
+    "@sinclair/typebox": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0"
   }
 }

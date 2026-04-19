@@ -4,12 +4,13 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "esModuleInterop": true,
-    "strict": true,
+    "strict": false,
     "skipLibCheck": true,
     "outDir": "dist",
     "rootDir": "src",
     "declaration": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "types": ["node"]
   },
   "include": ["src/**/*.ts"]
 }

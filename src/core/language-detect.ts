@@ -3,7 +3,7 @@
  * Uses character and word heuristics. No ML needed.
  */
 
-const POLISH_CHARS = /[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]/;
+const POLISH_CHARS = /[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]/g;
 
 const POLISH_COMMON_WORDS = new Set([
 	"jest",
