@@ -211,17 +211,18 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 					}
 					if (!speaking) break;
 
-					// Detect language: wait for ~200 chars of text for reliable detection
+					// Detect language: if forced, use immediately; if auto, buffer ~200 chars
 					if (!liveLanguage) {
-						const allQueued = liveSentenceQueue.join(" ");
-						if (allQueued.length < 200 && liveStreamActive) {
-							// Not enough text yet — keep waiting
-							await new Promise(r => setTimeout(r, 100));
-							continue;
+						if (config.language !== "auto") {
+							liveLanguage = config.language;
+						} else {
+							const allQueued = liveSentenceQueue.join(" ");
+							if (allQueued.length < 200 && liveStreamActive) {
+								await new Promise(r => setTimeout(r, 100));
+								continue;
+							}
+							liveLanguage = detectLanguage(allQueued);
 						}
-						liveLanguage = config.language === "auto"
-							? detectLanguage(allQueued)
-							: config.language;
 					}
 
 					const sentence = liveSentenceQueue.shift()!;
