@@ -15,6 +15,13 @@ export interface TellMeConfig {
 	speed: number;
 	/** Auto-read assistant messages in Pi extension */
 	autoRead: boolean;
+	/** Keyboard shortcuts (Pi extension) */
+	shortcuts: {
+		/** Speak / stop last assistant message */
+		speak: string;
+		/** Read clipboard aloud */
+		clipboard: string;
+	};
 }
 
 export const DEFAULT_CONFIG: TellMeConfig = {
@@ -24,6 +31,10 @@ export const DEFAULT_CONFIG: TellMeConfig = {
 	plModel: "meski_wg_glos-medium",
 	speed: 1.0,
 	autoRead: false,
+	shortcuts: {
+		speak: "ctrl+shift+s",
+		clipboard: "ctrl+shift+r",
+	},
 };
 
 export const KOKORO_MODEL = {
@@ -89,8 +100,8 @@ export function isMac(): boolean {
 const CONFIG_PATH = join(homedir(), ".tellme", "config.json");
 
 /** User-facing config keys that get persisted */
-type PersistableKeys = "language" | "enVoice" | "plModel" | "speed" | "autoRead";
-const PERSISTABLE: PersistableKeys[] = ["language", "enVoice", "plModel", "speed", "autoRead"];
+type PersistableKeys = "language" | "enVoice" | "plModel" | "speed" | "autoRead" | "shortcuts";
+const PERSISTABLE: PersistableKeys[] = ["language", "enVoice", "plModel", "speed", "autoRead", "shortcuts"];
 
 /**
  * Load config from ~/.tellme/config.json merged over defaults.
@@ -106,6 +117,10 @@ export function loadConfig(): TellMeConfig {
 			if (typeof raw.plModel === "string" && raw.plModel in PIPER_PL_MODELS) config.plModel = raw.plModel;
 			if (typeof raw.speed === "number" && raw.speed >= 0.5 && raw.speed <= 2.0) config.speed = raw.speed;
 			if (typeof raw.autoRead === "boolean") config.autoRead = raw.autoRead;
+			if (raw.shortcuts && typeof raw.shortcuts === "object") {
+				if (typeof raw.shortcuts.speak === "string") config.shortcuts.speak = raw.shortcuts.speak;
+				if (typeof raw.shortcuts.clipboard === "string") config.shortcuts.clipboard = raw.shortcuts.clipboard;
+			}
 		}
 	} catch {
 		// ignore corrupt file

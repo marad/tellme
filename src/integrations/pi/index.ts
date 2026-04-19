@@ -555,7 +555,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 
 	// --- Shortcuts ---
 
-	pi.registerShortcut("ctrl+shift+s", {
+	pi.registerShortcut(config.shortcuts.speak, {
 		description: "Speak / stop last assistant message",
 		handler: async (ctx) => {
 			// Toggle: if speaking → stop, otherwise → speak
@@ -573,7 +573,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerShortcut("ctrl+shift+r", {
+	pi.registerShortcut(config.shortcuts.clipboard, {
 		description: "Read clipboard text aloud",
 		handler: async (ctx) => {
 			if (speaking) {
