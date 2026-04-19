@@ -1,140 +1,99 @@
 # Tell Me 🔊
 
-Local TTS for coding agents — read AI responses aloud using high-quality local models.
+Local text-to-speech for coding agents — read AI responses aloud using high-quality, offline models. No API keys, no cloud, runs entirely on your CPU.
 
-**Dual-engine architecture:**
-- 🇬🇧 **Kokoro** (82M params) — natural English speech, 20 voices
-- 🇵🇱 **Piper VITS** — Polish speech, multiple voices
+**Engines:**
+- 🇬🇧 **Kokoro** — natural English, 11 voices (82M params, int8 quantized)
+- 🇵🇱 **Piper VITS** — Polish, 3 voice variants
 - 🔍 **Auto language detection** — switches engine automatically
 
-## Quick Start
+Works as a **standalone CLI**, a **[Pi](https://github.com/nicepkg/pi) extension**, or with **Claude Code** / **OpenCode** via slash commands.
 
-### Install & download models
+## Install
 
 ```bash
+npm install -g tellme
+tellme --download          # downloads ~160 MB of models to ~/.tellme/models
+```
+
+Or install from source:
+
+```bash
+git clone https://github.com/marad/tellme.git
 cd tellme
 npm install
-npx tellme --download   # Downloads ~160 MB of models
+npx tellme --download
 ```
 
-### Use as CLI
+### Requirements
+
+- Node.js ≥ 18
+- Linux or macOS (x64 / ARM)
+- Audio output: PulseAudio or ALSA (Linux), CoreAudio (macOS)
+- ~160 MB disk for models
+- No GPU needed
+
+## CLI usage
 
 ```bash
-npx tellme "Hello, how are you?"
-npx tellme --lang pl "Dzień dobry, jak się masz?"
-echo "Some text" | npx tellme
-npx tellme --voice am_fenrir "Deep voice"
-npx tellme --list-voices
+tellme "Hello, how are you?"
+tellme --lang pl "Dzień dobry, jak się masz?"
+echo "Some text" | tellme
+tellme --voice am_adam "Different voice"
+tellme --speed 1.3 "Faster speech"
+tellme --list-voices
+tellme --status
 ```
-
-### Use as Pi extension
-
-```bash
-# Install as Pi package
-pi install /path/to/tellme
-
-# Or for quick test
-pi -e /path/to/tellme
-```
-
-Then in Pi:
-- `/tellme` — read the last assistant message
-- `/tellme-auto` — toggle auto-read after every response
-- `/tellme-voice` — pick a Kokoro voice
-- `/tellme-stop` — stop playback
-- `/tellme-download` — download models
-- `/tellme-status` — check engine status
-- `Ctrl+Shift+S` — shortcut to speak last message
-- The LLM can call the `speak` tool directly
-
-### Use with Claude Code
-
-Copy the slash command:
-```bash
-cp integrations/claude-code/tellme.md ~/.claude/commands/
-```
-Then use `/tellme` in Claude Code conversations.
-
-### Use with OpenCode
-
-Copy the custom command:
-```bash
-cp integrations/opencode/tellme.md ~/.config/opencode/command/
-```
-
-## Configuration
-
-### Kokoro EN voices
-
-| Voice | Type | Grade |
-|-------|------|-------|
-| `af_heart` ⭐ | Female | A |
-| `af_bella` | Female | A- |
-| `af_nicole` | Female | B- |
-| `am_fenrir` | Male | C+ |
-| `am_michael` | Male | C+ |
-| `am_puck` | Male | C+ |
-
-Full list: `npx tellme --list-voices`
-
-### CLI options
 
 | Option | Description |
 |--------|-------------|
 | `--download` | Download TTS models |
-| `--lang <en\|pl\|auto>` | Force language |
-| `--voice <name>` | Kokoro voice (default: af_heart) |
-| `--speed <0.5-2.0>` | Speech speed |
-| `--pl-model <name>` | Polish voice variant |
-| `--status` | Show model status |
+| `--lang <en\|pl\|auto>` | Force language (default: `auto`) |
+| `--voice <name>` | Kokoro EN voice (default: `af_bella`) |
+| `--speed <0.5–2.0>` | Speech speed (default: `1.0`) |
+| `--pl-model <name>` | Polish voice: `gosia-medium`, `darkman-medium`, `mc_speech-medium` |
+| `--list-voices` | List available Kokoro voices |
+| `--status` | Show model download status |
+| `--raw` | Skip markdown stripping / text cleanup |
 
-### Polish voices
+## Pi extension
 
-| Model | Description |
-|-------|-------------|
-| `darkman-medium` (default) | Male voice |
-| `gosia-medium` | Female voice |
-| `mc_speech-medium` | Male voice |
-
-## Architecture
-
-```
-tellme/
-├── src/
-│   ├── core/                  # Shared TTS engine
-│   │   ├── tts-engine.ts      # Kokoro + Piper wrapper
-│   │   ├── model-manager.ts   # Download & cache models
-│   │   ├── audio-player.ts    # Cross-platform playback
-│   │   ├── language-detect.ts # PL vs EN detection
-│   │   └── text-prep.ts       # Markdown stripping
-│   ├── cli/                   # Standalone CLI
-│   │   └── index.ts
-│   └── integrations/
-│       └── pi/                # Pi extension
-│           └── index.ts
-├── integrations/
-│   ├── claude-code/           # Claude Code slash command
-│   └── opencode/              # OpenCode custom command
-└── bin/
-    └── tellme.js              # CLI entry point
+```bash
+pi install /path/to/tellme
+# or for a quick test:
+pi -e /path/to/tellme
 ```
 
-## Requirements
+| Command / shortcut | Description |
+|--------------------|-------------|
+| `/tellme` | Read last assistant message aloud |
+| `/tellme-stop` | Stop playback |
+| `/tellme-auto` | Toggle auto-read after every response |
+| `/tellme-voice` | Pick a Kokoro voice |
+| `/tellme-download` | Download models |
+| `/tellme-status` | Show engine status |
+| `Ctrl+Shift+S` | Speak / stop toggle |
 
-- **Node.js** >= 18
-- **Linux** or **macOS** (x64 or ARM)
-- ~160 MB disk for models (downloaded on first use)
-- No GPU required — runs on CPU
-- Audio output: PulseAudio/ALSA (Linux), CoreAudio (macOS)
+The LLM can also call the `speak` tool directly.
 
-## How it works
+## Claude Code / OpenCode
 
-1. **sherpa-onnx-node** — native C++ addon for ONNX model inference
-   - Prebuilt binaries for linux-x64, linux-arm64, darwin-x64, darwin-arm64
-2. **Kokoro** — 82M parameter TTS model, int8 quantized (~99 MB)
-3. **Piper VITS** — lightweight TTS trained on Polish speech data (~64 MB)
-4. **speaker** npm — direct PCM audio output (fallback: ffplay/afplay/aplay)
-5. **Language detection** — heuristic based on Polish characters and common words
+```bash
+# Claude Code
+cp integrations/claude-code/tellme.md ~/.claude/commands/
+
+# OpenCode
+cp integrations/opencode/tellme.md ~/.config/opencode/command/
+```
+
+Then use the `/tellme` slash command in conversations.
+
+## Audio playback
+
+Streaming audio is piped as raw PCM to a subprocess, keeping TTS generation and playback decoupled:
+
+- **Linux:** `paplay` → `aplay` → `ffplay` → `sox play` (first available)
+- **macOS:** `ffplay` → `sox play` (streaming), `afplay` (one-shot fallback)
 
 ## License
 

@@ -76,6 +76,8 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 		notify?: (msg: string, type: string) => void,
 	) {
 		stopPlayback();
+		speaking = true;
+		statusUpdater?.(`🔊 ⏳ loading...`);
 
 		(async () => {
 			try {
@@ -94,7 +96,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 				const chunks = splitIntoChunks(cleanText);
 				if (chunks.length === 0) return;
 
-				speaking = true;
+				statusUpdater?.(`🔊 ⏳ generating ${langLabel}...`);
 
 				const sampleRate = engine.getSampleRate(language);
 				const player = await createStreamingPlayer(sampleRate);
@@ -136,7 +138,6 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 			}
 		})();
 	}
-
 	// --- Extract last assistant text from session ---
 
 	function getLastAssistantText(ctx: { sessionManager: { getBranch: () => any[] } }): string | null {
