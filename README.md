@@ -1,212 +1,73 @@
 # Tell Me 🔊
 
-Local text-to-speech for coding agents — read AI responses aloud using high-quality, offline TTS models. No API keys, no cloud, runs entirely on your CPU.
+Listen to your AI coding agent instead of reading. Tell Me is a local text-to-speech extension that reads assistant responses aloud — no cloud services, no API keys, everything runs on your CPU.
 
-**Engines:**
-- 🇬🇧 **Kokoro v0.19** — natural English, 11 voices (82M params, fp32)
-- 🇵🇱 **Piper VITS** — Polish, 2 voices (męski / Justyna)
-- 🔍 **Auto language detection** — switches engine automatically
+## Why?
 
-Works as a **[Pi](https://github.com/mariozechner/pi) extension** (with live streaming TTS), a **standalone CLI**, or with **Claude Code** / **OpenCode** via slash commands.
+When you're working with an AI coding agent, you spend a lot of time waiting for and reading responses. Tell Me lets you **listen instead** — lean back, rest your eyes, or keep working while the agent talks to you. It starts speaking while the response is still being generated, so you don't wait for the full answer.
+
+## Features
+
+- **Live streaming** — starts reading while the agent is still typing
+- **Two engines** — Kokoro for English (natural, 11 voices), Piper for Polish (2 voices)
+- **Auto language detection** — switches between English and Polish automatically
+- **Agent-controlled** — the LLM can switch language or read text aloud via tools
+- **Read from clipboard** — select any text, copy, and hear it (`Ctrl+Shift+R`)
+- **Configurable** — voice, speed, language — persisted in `~/.tellme/config.json`
+- **Cross-platform** — Linux and macOS, x64 and ARM64
 
 ## Install
 
-### As a Pi package
+### Pi (recommended)
 
 ```bash
-pi install /path/to/tellme
-# or for a quick test:
-pi -e /path/to/tellme
+pi install https://github.com/marad/tellme
 ```
 
-### From source
+Then in any Pi session:
+```
+/tellme-download          # one-time: downloads ~430 MB of TTS models
+/tellme-auto              # toggle auto-read
+```
+
+### CLI
 
 ```bash
 git clone https://github.com/marad/tellme.git
-cd tellme
-npm install
+cd tellme && npm install && npm link
+tellme --download
+tellme "Hello world"
 ```
 
-### Download models
+### Claude Code / OpenCode
 
 ```bash
-npx tellme --download     # ~430 MB total (Kokoro EN + Piper PL)
+# After CLI install above:
+cp integrations/claude-code/tellme.md ~/.claude/commands/       # Claude Code
+cp integrations/opencode/tellme.md ~/.config/opencode/commands/  # OpenCode
 ```
 
-Or in Pi: `/tellme-download`
-
-Models are cached in `~/.tellme/models/`.
-
-### Requirements
+## Requirements
 
 - Node.js ≥ 18
-- Linux or macOS (x64 / ARM64)
-- Audio output: PulseAudio or ALSA (Linux), CoreAudio (macOS)
+- `espeak-ng` installed
+- Audio: PulseAudio or ALSA (Linux), CoreAudio (macOS)
 - ~430 MB disk for models
-- `espeak-ng` installed (used by both engines for phonemization)
 - No GPU needed
 
-## Pi extension
+## Quick reference
 
-The Pi extension is the primary integration — it supports **live streaming TTS** that starts reading while the agent is still generating its response.
-
-### Commands
-
-| Command | Description |
-|---------|-------------|
-| `/tellme` | Read last assistant message aloud |
-| `/tellme-stop` | Stop playback |
-| `/tellme-auto` | Toggle auto-read (reads every response) |
-| `/tellme-lang` | Set language: auto, en, or pl |
-| `/tellme-speed` | Set speech speed (0.5x – 2.0x) |
-| `/tellme-voice` | Pick Kokoro EN voice |
+| Pi command | What it does |
+|------------|--------------|
+| `/tellme` | Read last response |
+| `/tellme-auto` | Toggle auto-read |
+| `/tellme-lang` | Set language (auto / en / pl) |
+| `/tellme-speed` | Set speed (0.5x – 2.0x) |
+| `/tellme-voice` | Pick English voice |
 | `/tellme-plvoice` | Pick Polish voice |
-| `/tellme-download` | Download TTS models |
-| `/tellme-status` | Show engine status |
-
-### Shortcuts
-
-| Shortcut | Description |
-|----------|-------------|
+| `/tellme-stop` | Stop playback |
 | `Ctrl+Shift+S` | Speak / stop toggle |
-
-### LLM tools
-
-The extension registers two tools the agent can use:
-
-- **`speak`** — Read text aloud (the agent calls this when you ask it to read something)
-- **`set_tts_language`** — Switch TTS language (the agent calls this when you say e.g. "odpowiadaj po polsku")
-
-### Live streaming
-
-When auto-read is on (`/tellme-auto`), TTS starts generating audio **while the agent is still streaming its response**. Each completed sentence is sent to the TTS engine immediately — you hear the first sentence before the agent finishes writing.
-
-The status bar shows the current state:
-
-| Status | Meaning |
-|--------|---------|
-| `🔊 EN+PL [auto]` | Idle, auto-read on, both engines ready |
-| `🔊 PL 1.5x` | Idle, Polish forced, speed 1.5x |
-| `🔊 ⏳ listening...` | Agent started responding, buffering text |
-| `🔊 ▶ live EN [3]` | Generating chunk 3 in real-time |
-| `🔊 ▶ playing EN` | Generation done, finishing playback |
-
-### Configuration
-
-Settings are saved to `~/.tellme/config.json` and persist across sessions.
-Any change via commands or tools updates the file automatically.
-
-```json
-{
-  "language": "auto",
-  "enVoice": "af_bella",
-  "plModel": "meski_wg_glos-medium",
-  "speed": 1.0,
-  "autoRead": false
-}
-```
-
-Session-level overrides (from Pi session entries) take precedence over the global config.
-
-## CLI usage
-
-```bash
-tellme "Hello, how are you?"
-tellme --lang pl "Dzień dobry, jak się masz?"
-echo "Some text" | tellme
-tellme --voice am_adam "Different voice"
-tellme --speed 1.3 "Faster speech"
-tellme --list-voices
-tellme --status
-```
-
-| Option | Description |
-|--------|-------------|
-| `--download` | Download TTS models |
-| `--lang <en\|pl\|auto>` | Force language (default: from config) |
-| `--voice <name>` | Kokoro EN voice (default: `af_bella`) |
-| `--speed <0.5–2.0>` | Speech speed (default: `1.0`) |
-| `--pl-model <name>` | Polish voice: `meski_wg_glos-medium`, `justyna_wg_glos-medium` |
-| `--list-voices` | List available Kokoro voices |
-| `--status` | Show model download status |
-| `--raw` | Skip text preparation (read as-is) |
-
-CLI defaults come from `~/.tellme/config.json` — command-line args override.
-
-## Claude Code / OpenCode
-
-```bash
-# Claude Code
-cp integrations/claude-code/tellme.md ~/.claude/commands/
-
-# OpenCode
-cp integrations/opencode/tellme.md ~/.config/opencode/command/
-```
-
-Then use the `/tellme` slash command in conversations.
-
-## Voices
-
-### English (Kokoro)
-
-| Voice | Type | Grade |
-|-------|------|-------|
-| `af_bella` | 🇺🇸 Female | A- (default) |
-| `af_nicole` | 🇺🇸 Female | B- |
-| `af_sarah` | 🇺🇸 Female | C+ |
-| `af_sky` | 🇺🇸 Female | C- |
-| `am_adam` | 🇺🇸 Male | F+ |
-| `am_michael` | 🇺🇸 Male | C+ |
-| `bf_emma` | 🇬🇧 Female | B- |
-| `bf_isabella` | 🇬🇧 Female | C |
-| `bm_george` | 🇬🇧 Male | C |
-| `bm_lewis` | 🇬🇧 Male | D+ |
-
-### Polish (Piper)
-
-| Voice | Type |
-|-------|------|
-| `meski_wg_glos-medium` | Male (default) |
-| `justyna_wg_glos-medium` | Female |
-
-## Audio playback
-
-Streaming audio is piped as raw PCM to a subprocess player, keeping TTS generation and playback on separate processes to avoid stuttering:
-
-- **Linux:** `paplay` → `aplay` → `ffplay` → `sox play` (first available)
-- **macOS:** `ffplay` → `sox play`
-
-## Text preparation
-
-AI responses go through `prepareForSpeech()` before TTS:
-
-- Code blocks → removed
-- File paths → filename only (`/home/user/src/app.ts` → "app dot ts")
-- Inline code → spoken as words (`camelCase` → "camel case")
-- Markdown formatting → stripped
-- URLs, tables, emojis → removed
-- `--raw` flag skips all of this
-
-## Architecture
-
-```
-~/.tellme/
-├── config.json                    # Global preferences
-└── models/
-    ├── kokoro-en-v0_19/           # English (~350 MB)
-    └── vits-piper-pl_PL-*/        # Polish (~80 MB each)
-
-src/
-├── core/
-│   ├── config.ts                  # Config, voices, model definitions
-│   ├── tts-engine.ts              # Dual-engine TTS (Kokoro + Piper)
-│   ├── audio-player.ts            # Subprocess streaming player
-│   ├── language-detect.ts         # PL vs EN detection
-│   ├── text-prep.ts               # AI text → speakable text
-│   └── model-manager.ts           # Download & extract models
-├── cli/index.ts                   # CLI entry point
-└── integrations/pi/index.ts       # Pi extension
-```
+| `Ctrl+Shift+R` | Read clipboard aloud |
 
 ## License
 
