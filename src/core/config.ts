@@ -1,5 +1,6 @@
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir, platform } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 
 export interface TellMeConfig {
 	/** Directory for cached models */
@@ -81,4 +82,49 @@ export function isLinux(): boolean {
 
 export function isMac(): boolean {
 	return platform() === "darwin";
+}
+
+// --- Global config persistence (~/.tellme/config.json) ---
+
+const CONFIG_PATH = join(homedir(), ".tellme", "config.json");
+
+/** User-facing config keys that get persisted */
+type PersistableKeys = "language" | "enVoice" | "plModel" | "speed" | "autoRead";
+const PERSISTABLE: PersistableKeys[] = ["language", "enVoice", "plModel", "speed", "autoRead"];
+
+/**
+ * Load config from ~/.tellme/config.json merged over defaults.
+ * Invalid or missing file → returns defaults.
+ */
+export function loadConfig(): TellMeConfig {
+	const config = { ...DEFAULT_CONFIG };
+	try {
+		if (existsSync(CONFIG_PATH)) {
+			const raw = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
+			if (raw.language === "auto" || raw.language === "en" || raw.language === "pl") config.language = raw.language;
+			if (typeof raw.enVoice === "string" && raw.enVoice in KOKORO_VOICES) config.enVoice = raw.enVoice;
+			if (typeof raw.plModel === "string" && raw.plModel in PIPER_PL_MODELS) config.plModel = raw.plModel;
+			if (typeof raw.speed === "number" && raw.speed >= 0.5 && raw.speed <= 2.0) config.speed = raw.speed;
+			if (typeof raw.autoRead === "boolean") config.autoRead = raw.autoRead;
+		}
+	} catch {
+		// ignore corrupt file
+	}
+	return config;
+}
+
+/**
+ * Save user preferences to ~/.tellme/config.json.
+ * Only persists user-facing keys, not modelsDir.
+ */
+export function saveConfig(config: TellMeConfig): void {
+	try {
+		const dir = dirname(CONFIG_PATH);
+		if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+		const data: Record<string, unknown> = {};
+		for (const key of PERSISTABLE) data[key] = config[key];
+		writeFileSync(CONFIG_PATH, JSON.stringify(data, null, 2) + "\n");
+	} catch {
+		// best-effort
+	}
 }

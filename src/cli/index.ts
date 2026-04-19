@@ -13,7 +13,7 @@
  *   tellme --list-voices              # list available voices
  */
 
-import { DEFAULT_CONFIG, KOKORO_VOICES, resolveVoiceId, type TellMeConfig } from "../core/config.js";
+import { DEFAULT_CONFIG, KOKORO_VOICES, resolveVoiceId, loadConfig, type TellMeConfig } from "../core/config.js";
 import { ensureAllModels, isKokoroReady, isPiperPlReady, type DownloadProgress } from "../core/model-manager.js";
 import { TellMeTts } from "../core/tts-engine.js";
 import { playAudio, createStreamingPlayer } from "../core/audio-player.js";
@@ -31,9 +31,9 @@ Usage:
 Options:
   --download          Download TTS models (Kokoro EN + Piper PL)
   --lang <en|pl|auto> Force language (default: auto)
-  --voice <name>      Kokoro EN voice (default: af_bella)
-  --speed <0.5-2.0>   Speech speed (default: 1.0)
-  --pl-model <name>   Polish model: darkman-medium, gosia-medium, mc_speech-medium
+  --voice <name>      Kokoro EN voice (default: from config)
+  --speed <0.5-2.0>   Speech speed (default: from config)
+  --pl-model <name>   Polish model: meski_wg_glos-medium, justyna_wg_glos-medium
   --list-voices       List available Kokoro voices
   --status            Show model download status
   --raw               Skip text preparation (read as-is)
@@ -42,13 +42,14 @@ Options:
 }
 
 function parseArgs(argv: string[]) {
+	const defaults = loadConfig();
 	const result = {
 		text: null as string | null,
 		download: false,
-		language: "auto" as "auto" | "en" | "pl",
-		voice: DEFAULT_CONFIG.enVoice,
-		speed: 1.0,
-		plModel: "darkman-medium",
+		language: defaults.language,
+		voice: defaults.enVoice,
+		speed: defaults.speed,
+		plModel: defaults.plModel,
 		listVoices: false,
 		status: false,
 		raw: false,
@@ -64,7 +65,7 @@ function parseArgs(argv: string[]) {
 			case "--lang": result.language = argv[++i] as "auto" | "en" | "pl"; break;
 			case "--voice": result.voice = argv[++i]; break;
 			case "--speed": result.speed = parseFloat(argv[++i]); break;
-			case "--pl-model": result.plModel = argv[++i]; break;
+			case "--pl-model": result.plModel = argv[++i] as TellMeConfig["plModel"]; break;
 			case "--list-voices": result.listVoices = true; break;
 			case "--status": result.status = true; break;
 			case "--raw": result.raw = true; break;
@@ -93,7 +94,7 @@ async function main() {
 	if (args.help) { printUsage(); process.exit(0); }
 
 	const config: TellMeConfig = {
-		...DEFAULT_CONFIG,
+		...loadConfig(),
 		language: args.language,
 		speed: args.speed,
 		plModel: args.plModel as TellMeConfig["plModel"],

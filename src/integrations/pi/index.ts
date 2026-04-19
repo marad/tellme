@@ -9,7 +9,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
-import { DEFAULT_CONFIG, KOKORO_VOICES, PIPER_PL_MODELS, resolveVoiceId, type TellMeConfig } from "../../core/config.js";
+import { DEFAULT_CONFIG, KOKORO_VOICES, PIPER_PL_MODELS, resolveVoiceId, loadConfig, saveConfig, type TellMeConfig } from "../../core/config.js";
 import { TellMeTts } from "../../core/tts-engine.js";
 import { playAudio, createStreamingPlayer, trimSilence, type PlaybackHandle, type StreamingPlayer } from "../../core/audio-player.js";
 import { detectLanguage, type DetectedLanguage } from "../../core/language-detect.js";
@@ -17,7 +17,7 @@ import { prepareForSpeech, splitIntoChunks } from "../../core/text-prep.js";
 import { ensureAllModels, isKokoroReady, isPiperPlReady } from "../../core/model-manager.js";
 
 export default function tellMeExtension(pi: ExtensionAPI) {
-	let config: TellMeConfig = { ...DEFAULT_CONFIG };
+	let config: TellMeConfig = loadConfig();
 	let tts: TellMeTts | null = null;
 	let currentPlayback: PlaybackHandle | null = null;
 	let autoRead = config.autoRead;
@@ -35,8 +35,13 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 	let liveGenPromise: Promise<void> | null = null;
 	let liveSentenceCount = 0;
 
-	function idleStatus() {
-		const kokoro = isKokoroReady(config);
+	/** Persist config to session entry + global ~/.tellme/config.json */
+	function persistConfig() {
+		pi.appendEntry("tellme-config", { autoRead, language: config.language, enVoice: config.enVoice, plModel: config.plModel, speed: config.speed });
+		saveConfig(config);
+	}
+
+	function idleStatus() {		const kokoro = isKokoroReady(config);
 		const piper = isPiperPlReady(config);
 		if (!kokoro && !piper) return "";
 		const autoTag = autoRead ? " [auto]" : "";
@@ -387,7 +392,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 		description: "Toggle auto-read of assistant messages",
 		handler: async (_args, ctx) => {
 			autoRead = !autoRead;
-			pi.appendEntry("tellme-config", { autoRead, language: config.language, enVoice: config.enVoice, plModel: config.plModel, speed: config.speed });
+			persistConfig();
 			statusUpdater?.(idleStatus());
 			ctx.ui.notify(`Auto-read: ${autoRead ? "ON ✅" : "OFF ❌"}`, "info");
 		},
@@ -408,7 +413,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 			if (choice) {
 				const lang = choice.split(" ")[0] as "auto" | "en" | "pl";
 				config.language = lang;
-				pi.appendEntry("tellme-config", { autoRead, language: config.language, enVoice: config.enVoice, plModel: config.plModel, speed: config.speed });
+				persistConfig();
 				statusUpdater?.(idleStatus());
 				ctx.ui.notify(`Language: ${lang}`, "success");
 			}
@@ -425,7 +430,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 			);
 			if (choice) {
 				config.speed = parseFloat(choice);
-				pi.appendEntry("tellme-config", { autoRead, language: config.language, enVoice: config.enVoice, plModel: config.plModel, speed: config.speed });
+				persistConfig();
 				statusUpdater?.(idleStatus());
 				ctx.ui.notify(`Speed: ${config.speed}x`, "success");
 			}
@@ -447,7 +452,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 				tts?.free();
 				tts = null;
 				initPromise = null;
-				pi.appendEntry("tellme-config", { autoRead, language: config.language, enVoice: config.enVoice, plModel: config.plModel, speed: config.speed });
+				persistConfig();
 				ctx.ui.notify(`Voice: ${choice}`, "success");
 			}
 		},
@@ -472,7 +477,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 					tts?.free();
 					tts = null;
 					initPromise = null;
-					pi.appendEntry("tellme-config", { autoRead, language: config.language, enVoice: config.enVoice, plModel: config.plModel, speed: config.speed });
+					persistConfig();
 					ctx.ui.notify(`PL voice: ${PIPER_PL_MODELS[key].label}`, "success");
 				}
 			}
