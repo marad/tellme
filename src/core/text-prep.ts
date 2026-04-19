@@ -107,6 +107,25 @@ export function prepareForSpeech(text: string): string {
 	result = result.replace(/^[\s]*[-*+]\s+/gm, ". ");
 	result = result.replace(/^[\s]*\d+\.\s+/gm, ". ");
 
+	// ── Phase 3b: Speech-friendly transforms (language-neutral) ──
+
+	// Number+unit glued together → add space for TTS readability
+	// "500ms" → "500 ms", "4GB" → "4 GB", "2.5GHz" → "2.5 GHz"
+	// Preserve ordinals: 1st, 2nd, 3rd, 4th, 21st, 100th, etc.
+	result = result.replace(/(\d)(?!st\b|nd\b|rd\b|th\b)([a-zA-Z]{1,5}\b)/g, "$1 $2");
+
+	// Common English shorthands → expanded for natural speech
+	result = result.replace(/\be\.g\.[,:]?\s*/gi, "for example, ");
+	result = result.replace(/\bi\.e\.[,:]?\s*/gi, "that is, ");
+	result = result.replace(/\bvs\./gi, "versus");
+
+	// Common Polish shorthands → expanded for natural speech
+	result = result.replace(/\bnp\.[,:]?\s*/g, "na przykład, ");
+	result = result.replace(/\btj\.[,:]?\s*/g, "to jest, ");
+	result = result.replace(/\bm\.in\.[,:]?\s*/g, "między innymi, ");
+	result = result.replace(/\bitd\.[,:]?\s*/g, "i tak dalej, ");
+	result = result.replace(/\bitp\.[,:]?\s*/g, "i tym podobne, ");
+
 	// ── Phase 4: Clean up symbols and artifacts ──
 
 	// Arrows → skip
