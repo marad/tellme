@@ -40,7 +40,9 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 		if (isKokoroReady(config)) engines.push("EN");
 		if (isPiperPlReady(config)) engines.push("PL");
 		if (engines.length === 0) return "";
-		return `🔊 ${engines.join("+")}${autoRead ? " [auto]" : ""}`;
+		const langTag = config.language === "auto" ? "" : ` [${config.language.toUpperCase()}]`;
+		const autoTag = autoRead ? " [auto]" : "";
+		return `🔊 ${engines.join("+")}${langTag}${autoTag}`;
 	}
 
 	// --- Lazy TTS initialization ---
@@ -343,6 +345,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 				if (typeof data.enVoice === "string") config.enVoice = data.enVoice;
 				if (typeof data.speed === "number") config.speed = data.speed;
 				if (data.plModel) config.plModel = data.plModel;
+				if (data.language === "auto" || data.language === "en" || data.language === "pl") config.language = data.language;
 			}
 		}
 
@@ -380,9 +383,31 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 		description: "Toggle auto-read of assistant messages",
 		handler: async (_args, ctx) => {
 			autoRead = !autoRead;
-			pi.appendEntry("tellme-config", { autoRead, enVoice: config.enVoice, plModel: config.plModel, speed: config.speed });
+			pi.appendEntry("tellme-config", { autoRead, language: config.language, enVoice: config.enVoice, plModel: config.plModel, speed: config.speed });
 			statusUpdater?.(idleStatus());
 			ctx.ui.notify(`Auto-read: ${autoRead ? "ON ✅" : "OFF ❌"}`, "info");
+		},
+	});
+
+	pi.registerCommand("tellme-lang", {
+		description: "Set language: auto, en, or pl",
+		handler: async (_args, ctx) => {
+			const options = [
+				"auto — detect automatically",
+				"en — English only",
+				"pl — Polish only",
+			];
+			const choice = await ctx.ui.select(
+				`Current: ${config.language}. Pick language:`,
+				options,
+			);
+			if (choice) {
+				const lang = choice.split(" ")[0] as "auto" | "en" | "pl";
+				config.language = lang;
+				pi.appendEntry("tellme-config", { autoRead, language: config.language, enVoice: config.enVoice, plModel: config.plModel, speed: config.speed });
+				statusUpdater?.(idleStatus());
+				ctx.ui.notify(`Language: ${lang}`, "success");
+			}
 		},
 	});
 
@@ -401,7 +426,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 				tts?.free();
 				tts = null;
 				initPromise = null;
-				pi.appendEntry("tellme-config", { autoRead, enVoice: config.enVoice, plModel: config.plModel, speed: config.speed });
+				pi.appendEntry("tellme-config", { autoRead, language: config.language, enVoice: config.enVoice, plModel: config.plModel, speed: config.speed });
 				ctx.ui.notify(`Voice: ${choice}`, "success");
 			}
 		},
@@ -426,7 +451,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 					tts?.free();
 					tts = null;
 					initPromise = null;
-					pi.appendEntry("tellme-config", { autoRead, enVoice: config.enVoice, plModel: config.plModel, speed: config.speed });
+					pi.appendEntry("tellme-config", { autoRead, language: config.language, enVoice: config.enVoice, plModel: config.plModel, speed: config.speed });
 					ctx.ui.notify(`PL voice: ${PIPER_PL_MODELS[key].label}`, "success");
 				}
 			}
