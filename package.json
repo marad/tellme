@@ -22,7 +22,9 @@
   },
   "scripts": {
     "build": "echo 'nothing to build — loaded via jiti'",
-    "clean": "echo 'nothing to clean'"
+    "clean": "echo 'nothing to clean'",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "sherpa-onnx-node": "^1.12.38"
@@ -40,6 +42,7 @@
     }
   },
   "devDependencies": {
-    "@types/node": "^25.6.0"
+    "@types/node": "^25.6.0",
+    "vitest": "^4.1.4"
   }
 }
