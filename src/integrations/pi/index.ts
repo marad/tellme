@@ -9,7 +9,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
-import { DEFAULT_CONFIG, KOKORO_VOICES, resolveVoiceId, type TellMeConfig } from "../../core/config.js";
+import { DEFAULT_CONFIG, KOKORO_VOICES, PIPER_PL_MODELS, resolveVoiceId, type TellMeConfig } from "../../core/config.js";
 import { TellMeTts } from "../../core/tts-engine.js";
 import { playAudio, createStreamingPlayer, trimSilence, type PlaybackHandle, type StreamingPlayer } from "../../core/audio-player.js";
 import { detectLanguage, type DetectedLanguage } from "../../core/language-detect.js";
@@ -380,7 +380,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 		description: "Toggle auto-read of assistant messages",
 		handler: async (_args, ctx) => {
 			autoRead = !autoRead;
-			pi.appendEntry("tellme-config", { autoRead, enVoice: config.enVoice, speed: config.speed });
+			pi.appendEntry("tellme-config", { autoRead, enVoice: config.enVoice, plModel: config.plModel, speed: config.speed });
 			statusUpdater?.(idleStatus());
 			ctx.ui.notify(`Auto-read: ${autoRead ? "ON ✅" : "OFF ❌"}`, "info");
 		},
@@ -401,8 +401,34 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 				tts?.free();
 				tts = null;
 				initPromise = null;
-				pi.appendEntry("tellme-config", { autoRead, enVoice: config.enVoice, speed: config.speed });
+				pi.appendEntry("tellme-config", { autoRead, enVoice: config.enVoice, plModel: config.plModel, speed: config.speed });
 				ctx.ui.notify(`Voice: ${choice}`, "success");
+			}
+		},
+	});
+
+	pi.registerCommand("tellme-plvoice", {
+		description: "Select Polish voice",
+		handler: async (_args, ctx) => {
+			const models = Object.entries(PIPER_PL_MODELS);
+			const labels = models.map(([key, m]) => `${m.label} (${key})`);
+
+			const choice = await ctx.ui.select(
+				`Current PL voice: ${config.plModel}. Pick:`,
+				labels,
+			);
+
+			if (choice) {
+				const idx = labels.indexOf(choice);
+				if (idx >= 0) {
+					const [key] = models[idx];
+					config.plModel = key as TellMeConfig["plModel"];
+					tts?.free();
+					tts = null;
+					initPromise = null;
+					pi.appendEntry("tellme-config", { autoRead, enVoice: config.enVoice, plModel: config.plModel, speed: config.speed });
+					ctx.ui.notify(`PL voice: ${PIPER_PL_MODELS[key].label}`, "success");
+				}
 			}
 		},
 	});

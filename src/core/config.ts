@@ -9,7 +9,7 @@ export interface TellMeConfig {
 	/** English voice (Kokoro speaker name) */
 	enVoice: string;
 	/** Polish voice model variant */
-	plModel: "darkman-medium" | "gosia-medium" | "mc_speech-medium";
+	plModel: "meski_wg_glos-medium" | "justyna_wg_glos-medium";
 	/** Speech speed (0.5 - 2.0) */
 	speed: number;
 	/** Auto-read assistant messages in Pi extension */
@@ -20,7 +20,7 @@ export const DEFAULT_CONFIG: TellMeConfig = {
 	modelsDir: join(homedir(), ".tellme", "models"),
 	language: "auto",
 	enVoice: "af_bella",
-	plModel: "gosia-medium",
+	plModel: "meski_wg_glos-medium",
 	speed: 1.0,
 	autoRead: false,
 };
@@ -55,18 +55,16 @@ export const KOKORO_VOICES: Record<string, number> = {
 	bm_lewis: 10,
 };
 
-export const PIPER_PL_MODELS: Record<string, { url: string; onnxFile: string }> = {
-	"darkman-medium": {
-		url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-pl_PL-darkman-medium.tar.bz2",
-		onnxFile: "pl_PL-darkman-medium.onnx",
+export const PIPER_PL_MODELS: Record<string, { url: string; onnxFile: string; label: string }> = {
+	"meski_wg_glos-medium": {
+		url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-pl_PL-meski_wg_glos-medium.tar.bz2",
+		onnxFile: "pl_PL-meski_wg_glos-medium.onnx",
+		label: "Męski (wg głos)",
 	},
-	"gosia-medium": {
-		url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-pl_PL-gosia-medium.tar.bz2",
-		onnxFile: "pl_PL-gosia-medium.onnx",
-	},
-	"mc_speech-medium": {
-		url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-pl_PL-mc_speech-medium.tar.bz2",
-		onnxFile: "pl_PL-mc_speech-medium.onnx",
+	"justyna_wg_glos-medium": {
+		url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-pl_PL-justyna_wg_glos-medium.tar.bz2",
+		onnxFile: "pl_PL-justyna_wg_glos-medium.onnx",
+		label: "Justyna (wg głos)",
 	},
 };
 
