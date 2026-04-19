@@ -15,6 +15,27 @@ import { playAudio, createStreamingPlayer, trimSilence, type PlaybackHandle, typ
 import { detectLanguage, type DetectedLanguage } from "../../core/language-detect.js";
 import { prepareForSpeech, splitIntoChunks } from "../../core/text-prep.js";
 import { ensureAllModels, isKokoroReady, isPiperPlReady } from "../../core/model-manager.js";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { platform } from "node:os";
+
+const execFileAsync = promisify(execFile);
+
+/** Read text from system clipboard (Linux: xclip/xsel, macOS: pbpaste) */
+async function readClipboard(): Promise<string> {
+	if (platform() === "darwin") {
+		const { stdout } = await execFileAsync("pbpaste", [], { timeout: 2000 });
+		return stdout;
+	}
+	// Linux — try xclip first, then xsel
+	try {
+		const { stdout } = await execFileAsync("xclip", ["-selection", "clipboard", "-o"], { timeout: 2000 });
+		return stdout;
+	} catch {
+		const { stdout } = await execFileAsync("xsel", ["--clipboard", "--output"], { timeout: 2000 });
+		return stdout;
+	}
+}
 
 export default function tellMeExtension(pi: ExtensionAPI) {
 	let config: TellMeConfig = loadConfig();
@@ -549,6 +570,27 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 				return;
 			}
 			speakInBackground(text, (msg, type) => ctx.ui.notify(msg, type));
+		},
+	});
+
+	pi.registerShortcut("ctrl+shift+r", {
+		description: "Read clipboard text aloud",
+		handler: async (ctx) => {
+			if (speaking) {
+				stopPlayback();
+				return;
+			}
+
+			try {
+				const text = await readClipboard();
+				if (!text?.trim()) {
+					ctx.ui.notify("Clipboard is empty. Select text and copy first.", "info");
+					return;
+				}
+				speakInBackground(text, (msg, type) => ctx.ui.notify(msg, type));
+			} catch {
+				ctx.ui.notify("Could not read clipboard.", "error");
+			}
 		},
 	});
 
