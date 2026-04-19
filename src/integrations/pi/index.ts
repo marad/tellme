@@ -11,7 +11,7 @@ import { Type } from "@sinclair/typebox";
 
 import { DEFAULT_CONFIG, KOKORO_VOICES, resolveVoiceId, type TellMeConfig } from "../../core/config.js";
 import { TellMeTts } from "../../core/tts-engine.js";
-import { playAudio, createStreamingPlayer, type PlaybackHandle, type StreamingPlayer } from "../../core/audio-player.js";
+import { playAudio, createStreamingPlayer, trimSilence, type PlaybackHandle, type StreamingPlayer } from "../../core/audio-player.js";
 import { detectLanguage, type DetectedLanguage } from "../../core/language-detect.js";
 import { prepareForSpeech, splitIntoChunks } from "../../core/text-prep.js";
 import { ensureAllModels, isKokoroReady, isPiperPlReady } from "../../core/model-manager.js";
@@ -25,6 +25,15 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 	let initPromise: Promise<void> | null = null;
 	let speaking = false;
 	let statusUpdater: ((status: string) => void) | null = null;
+
+	// --- Live streaming TTS state ---
+	let liveStreamActive = false;
+	let liveBuffer = "";
+	let liveSentenceQueue: string[] = [];
+	let livePlayer: StreamingPlayer | null = null;
+	let liveLanguage: DetectedLanguage | null = null;
+	let liveGenPromise: Promise<void> | null = null;
+	let liveSentenceCount = 0;
 
 	function idleStatus() {
 		const engines = [];
@@ -62,6 +71,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 			currentPlayback = null;
 		}
 		speaking = false;
+		stopLiveStream();
 		statusUpdater?.(idleStatus());
 	}
 
@@ -158,7 +168,125 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 		return null;
 	}
 
+	// --- Live streaming TTS: generate audio while agent is still typing ---
+
+	/** Extract complete sentences from buffer, leave remainder */
+	function extractSentences(buf: string): { sentences: string[]; remainder: string } {
+		const sentences: string[] = [];
+		// Match up to a sentence-ending punctuation followed by space or end
+		const re = /^([\s\S]*?[.!?;:\n])(?=\s|$)/;
+		let rest = buf;
+		while (true) {
+			const m = rest.match(re);
+			if (!m) break;
+			const raw = m[1].trim();
+			if (raw) sentences.push(raw);
+			rest = rest.slice(m[0].length);
+		}
+		return { sentences, remainder: rest };
+	}
+
+	/** Start the background generation loop that drains liveSentenceQueue */
+	function startLiveGenLoop() {
+		if (liveGenPromise) return; // already running
+		liveGenPromise = (async () => {
+			try {
+				const engine = await ensureTts();
+				while (liveStreamActive || liveSentenceQueue.length > 0) {
+					if (liveSentenceQueue.length === 0) {
+						// Wait a bit for more sentences
+						await new Promise(r => setTimeout(r, 50));
+						continue;
+					}
+					if (!speaking) break;
+
+					const sentence = liveSentenceQueue.shift()!;
+					const cleaned = prepareForSpeech(sentence);
+					if (!cleaned.trim()) continue;
+
+					// Detect language on first real sentence
+					if (!liveLanguage) {
+						liveLanguage = config.language === "auto"
+							? detectLanguage(cleaned)
+							: config.language;
+					}
+
+					// Create player on first chunk
+					if (!livePlayer) {
+						const sr = engine.getSampleRate(liveLanguage);
+						livePlayer = await createStreamingPlayer(sr) ?? null;
+						if (!livePlayer) break;
+						currentPlayback = { done: livePlayer.done, stop: () => livePlayer!.stop() };
+					}
+
+					const chunks = splitIntoChunks(cleaned);
+					for (const chunk of chunks) {
+						if (!speaking) break;
+						await new Promise(r => setImmediate(r));
+						let samples = engine.generate(chunk, liveLanguage).samples;
+						samples = trimSilence(samples, liveSentenceCount > 0, true);
+						livePlayer.write(samples);
+						liveSentenceCount++;
+						const langLabel = liveLanguage === "pl" ? "PL" : "EN";
+						statusUpdater?.(`🔊 ▶ live ${langLabel} [${liveSentenceCount}]`);
+					}
+				}
+			} catch (_err) {
+				// silently stop on error
+			} finally {
+				if (livePlayer) {
+					livePlayer.end();
+					const langLabel = liveLanguage === "pl" ? "PL" : "EN";
+					statusUpdater?.(`🔊 ▶ playing ${langLabel}`);
+					await livePlayer.done;
+				}
+				livePlayer = null;
+				currentPlayback = null;
+				speaking = false;
+				liveGenPromise = null;
+				statusUpdater?.(idleStatus());
+			}
+		})();
+	}
+
+	function stopLiveStream() {
+		liveStreamActive = false;
+		liveBuffer = "";
+		liveSentenceQueue = [];
+		liveLanguage = null;
+		liveSentenceCount = 0;
+	}
+
 	// --- Events ---
+
+	pi.on("message_start", async (event) => {
+		if (event.message?.role === "assistant" && autoRead) {
+			// Stop any ongoing playback and start live stream
+			stopPlayback();
+			stopLiveStream();
+			liveStreamActive = true;
+			speaking = true;
+			statusUpdater?.(`🔊 ⏳ listening...`);
+		}
+	});
+
+	pi.on("message_update", async (event) => {
+		if (!liveStreamActive) return;
+		if (!speaking) return;
+		const delta = (event as any).assistantMessageEvent;
+		if (!delta || delta.type !== "text_delta") return;
+
+		liveBuffer += delta.delta;
+
+		// Extract complete sentences
+		const { sentences, remainder } = extractSentences(liveBuffer);
+		liveBuffer = remainder;
+
+		if (sentences.length > 0) {
+			liveSentenceQueue.push(...sentences);
+			startLiveGenLoop();
+		}
+	});
 
 	pi.on("message_end", async (event) => {
 		if (event.message?.role === "assistant") {
@@ -173,15 +301,20 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 					lastAssistantText = textParts.join("\n");
 				}
 			}
+
+			// Flush remaining buffer for live stream
+			if (liveStreamActive && liveBuffer.trim()) {
+				liveSentenceQueue.push(liveBuffer.trim());
+				liveBuffer = "";
+				startLiveGenLoop();
+			}
+			liveStreamActive = false;
 		}
 	});
 
-	pi.on("agent_end", async (_event, ctx) => {
-		if (!autoRead) return;
-		if (!lastAssistantText) return;
-		if (lastAssistantText.trim().length < 20) return;
-
-		speakInBackground(lastAssistantText, (msg, type) => ctx.ui.notify(msg, type));
+	pi.on("agent_end", async (_event, _ctx) => {
+		// If live stream was active, it already handled TTS — nothing to do.
+		// If autoRead is off or live stream wasn't started, also nothing.
 	});
 
 	pi.on("session_shutdown", async () => {
