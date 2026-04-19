@@ -414,6 +414,23 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 		},
 	});
 
+	pi.registerCommand("tellme-speed", {
+		description: "Set speech speed (0.5x - 2.0x)",
+		handler: async (_args, ctx) => {
+			const options = ["0.5x", "0.75x", "1.0x", "1.25x", "1.5x", "1.75x", "2.0x"];
+			const choice = await ctx.ui.select(
+				`Current speed: ${config.speed}x. Pick:`,
+				options,
+			);
+			if (choice) {
+				config.speed = parseFloat(choice);
+				pi.appendEntry("tellme-config", { autoRead, language: config.language, enVoice: config.enVoice, plModel: config.plModel, speed: config.speed });
+				statusUpdater?.(idleStatus());
+				ctx.ui.notify(`Speed: ${config.speed}x`, "success");
+			}
+		},
+	});
+
 	pi.registerCommand("tellme-voice", {
 		description: "Select Kokoro EN voice",
 		handler: async (_args, ctx) => {
