@@ -36,13 +36,16 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 	let liveSentenceCount = 0;
 
 	function idleStatus() {
-		const engines = [];
-		if (isKokoroReady(config)) engines.push("EN");
-		if (isPiperPlReady(config)) engines.push("PL");
-		if (engines.length === 0) return "";
-		const langTag = config.language === "auto" ? "" : ` [${config.language.toUpperCase()}]`;
+		const kokoro = isKokoroReady(config);
+		const piper = isPiperPlReady(config);
+		if (!kokoro && !piper) return "";
 		const autoTag = autoRead ? " [auto]" : "";
-		return `🔊 ${engines.join("+")}${langTag}${autoTag}`;
+		if (config.language === "en") return `🔊 EN${autoTag}`;
+		if (config.language === "pl") return `🔊 PL${autoTag}`;
+		const engines = [];
+		if (kokoro) engines.push("EN");
+		if (piper) engines.push("PL");
+		return `🔊 ${engines.join("+")}${autoTag}`;
 	}
 
 	// --- Lazy TTS initialization ---
