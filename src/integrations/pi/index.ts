@@ -378,6 +378,15 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 		}
 	});
 
+	pi.on("before_agent_start", async (event) => {
+		if (config.language === "pl") {
+			return { systemPrompt: event.systemPrompt + "\n\nAlways respond in Polish (pl-PL). Use Polish for all explanations, comments, and conversational text. Keep code, file paths, and technical identifiers unchanged." };
+		}
+		if (config.language === "en") {
+			return { systemPrompt: event.systemPrompt + "\n\nAlways respond in English (en-US). Use English for all explanations, comments, and conversational text." };
+		}
+	});
+
 	pi.on("agent_end", async (_event, _ctx) => {
 		// Signal the gen loop that no more messages are coming.
 		// It will drain remaining sentences and stop naturally.
