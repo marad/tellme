@@ -594,4 +594,32 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 			}
 		},
 	});
+
+	pi.registerTool({
+		name: "set_tts_language",
+		label: "Set TTS Language",
+		description: "Change the text-to-speech language for this session. Call this when the user asks you to speak or respond in a specific language.",
+		promptSnippet: "Set TTS language (en, pl, or auto)",
+		promptGuidelines: [
+			"When the user asks you to respond in Polish (e.g. 'odpowiadaj po polsku', 'mów po polsku'), call set_tts_language with language='pl'",
+			"When the user asks you to respond in English (e.g. 'switch to English', 'respond in English'), call set_tts_language with language='en'",
+			"When the user asks for automatic language detection, call set_tts_language with language='auto'",
+		],
+		parameters: Type.Object({
+			language: Type.Union([Type.Literal("en"), Type.Literal("pl"), Type.Literal("auto")], {
+				description: "Language: en (English), pl (Polish), or auto (auto-detect)",
+			}),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			const lang = params.language as "auto" | "en" | "pl";
+			config.language = lang;
+			persistConfig();
+			statusUpdater?.(idleStatus());
+			const label = lang === "auto" ? "auto-detect" : lang === "pl" ? "Polish" : "English";
+			return {
+				content: [{ type: "text", text: `TTS language set to ${label}.` }],
+				details: { language: lang },
+			};
+		},
+	});
 }
