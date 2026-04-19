@@ -16,6 +16,15 @@ import { join } from "node:path";
 import { tmpdir, setPriority } from "node:os";
 import { isMac } from "./config.js";
 
+/**
+ * Generate a silent audio buffer of a given duration.
+ * Used to insert controlled pauses between speech chunks.
+ */
+export function generateSilence(sampleRate: number, durationMs: number): Float32Array {
+	const numSamples = Math.round(sampleRate * durationMs / 1000);
+	return new Float32Array(numSamples); // all zeros = silence
+}
+
 /** Convert float32 samples to int16 buffer */
 function float32ToInt16Buffer(samples: Float32Array): Buffer {
 	const buffer = Buffer.alloc(samples.length * 2);

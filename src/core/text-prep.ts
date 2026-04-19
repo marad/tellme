@@ -200,21 +200,42 @@ function codeToWords(code: string): string {
 }
 
 /**
+ * A text chunk annotated with pause information for natural speech rhythm.
+ */
+export interface SpeechChunk {
+	/** The text to synthesize */
+	text: string;
+	/** Milliseconds of silence to insert before this chunk's audio */
+	pauseBefore: number;
+}
+
+/** Pause durations in milliseconds */
+const PAUSE = {
+	/** Between paragraphs */
+	paragraph: 350,
+	/** After a colon (introducing a list / explanation) */
+	colon: 200,
+} as const;
+
+/**
  * Split prepared text into sentence-sized chunks for streaming TTS.
  * Each chunk is short enough for fast generation but long enough
- * to sound natural.
+ * to sound natural. Returns structured chunks with pause hints.
  */
-export function splitIntoChunks(text: string): string[] {
+export function splitIntoChunks(text: string): SpeechChunk[] {
 	// First split on paragraph breaks
 	const paragraphs = text.split(/\n\n+/).map(p => p.trim()).filter(Boolean);
 
-	const chunks: string[] = [];
+	const chunks: SpeechChunk[] = [];
+	let isFirstParagraph = true;
 
 	for (const para of paragraphs) {
 		// Split paragraph into sentences on . ! ? followed by a space
 		const sentences = para.split(/(?<=[.!?])\s+/).filter(s => s.trim());
 
+		let isFirstChunkInParagraph = true;
 		let buffer = "";
+
 		for (const sentence of sentences) {
 			const trimmed = sentence.trim();
 			if (!trimmed) continue;
@@ -224,16 +245,41 @@ export function splitIntoChunks(text: string): string[] {
 			} else if (buffer.length + trimmed.length < 120) {
 				buffer += " " + trimmed;
 			} else {
-				chunks.push(cleanChunk(buffer));
+				const cleaned = cleanChunk(buffer);
+				if (cleaned) {
+					const pauseBefore = getPauseBefore(cleaned, isFirstParagraph, isFirstChunkInParagraph);
+					chunks.push({ text: cleaned, pauseBefore });
+					isFirstChunkInParagraph = false;
+				}
 				buffer = trimmed;
 			}
 		}
 		if (buffer.trim()) {
-			chunks.push(cleanChunk(buffer));
+			const cleaned = cleanChunk(buffer);
+			if (cleaned) {
+				const pauseBefore = getPauseBefore(cleaned, isFirstParagraph, isFirstChunkInParagraph);
+				chunks.push({ text: cleaned, pauseBefore });
+			}
 		}
+
+		isFirstParagraph = false;
 	}
 
-	return chunks.filter(c => c.length > 0);
+	return chunks;
+}
+
+/** Determine the pause to insert before a chunk based on its context */
+function getPauseBefore(
+	_text: string,
+	isFirstParagraph: boolean,
+	isFirstChunkInParagraph: boolean,
+): number {
+	// First chunk of the entire text — no pause
+	if (isFirstParagraph && isFirstChunkInParagraph) return 0;
+	// First chunk of a new paragraph — paragraph pause
+	if (isFirstChunkInParagraph) return PAUSE.paragraph;
+	// Continuation within same paragraph — no extra pause
+	return 0;
 }
 
 function cleanChunk(text: string): string {

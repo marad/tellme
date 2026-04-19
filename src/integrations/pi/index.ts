@@ -11,7 +11,7 @@ import { Type } from "@sinclair/typebox";
 
 import { DEFAULT_CONFIG, KOKORO_VOICES, PIPER_PL_MODELS, resolveVoiceId, loadConfig, saveConfig, type TellMeConfig } from "../../core/config.js";
 import { TellMeTts } from "../../core/tts-engine.js";
-import { playAudio, createStreamingPlayer, trimSilence, type PlaybackHandle, type StreamingPlayer } from "../../core/audio-player.js";
+import { playAudio, createStreamingPlayer, trimSilence, generateSilence, type PlaybackHandle, type StreamingPlayer } from "../../core/audio-player.js";
 import { detectLanguage, type DetectedLanguage } from "../../core/language-detect.js";
 import { prepareForSpeech, splitIntoChunks } from "../../core/text-prep.js";
 import { ensureAllModels, isKokoroReady, isPiperPlReady } from "../../core/model-manager.js";
@@ -269,8 +269,12 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 					const chunks = splitIntoChunks(cleaned);
 					for (const chunk of chunks) {
 						if (!speaking || playbackEpoch !== epoch) break;
+						// Insert explicit pause
+						if (chunk.pauseBefore > 0 && livePlayer) {
+							livePlayer.write(generateSilence(engine.getSampleRate(liveLanguage), chunk.pauseBefore));
+						}
 						await new Promise(r => setImmediate(r));
-						let samples = engine.generate(chunk, liveLanguage).samples;
+						let samples = engine.generate(chunk.text, liveLanguage).samples;
 						if (playbackEpoch !== epoch) break;
 						samples = trimSilence(samples, liveSentenceCount > 0, true);
 						livePlayer.write(samples);
