@@ -49,12 +49,15 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 
 	// --- Live streaming TTS state ---
 	let liveStreamActive = false;
+	let liveStreamDone = false;
 	let liveBuffer = "";
 	let liveSentenceQueue: string[] = [];
 	let livePlayer: StreamingPlayer | null = null;
 	let liveLanguage: DetectedLanguage | null = null;
 	let liveGenPromise: Promise<void> | null = null;
 	let liveSentenceCount = 0;
+	/** Epoch counter — incremented on each new playback session to prevent stale async cleanup from clobbering new state */
+	let playbackEpoch = 0;
 
 	/** Persist config to session entry + global ~/.tellme/config.json */
 	function persistConfig() {
@@ -104,6 +107,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 		}
 		speaking = false;
 		stopLiveStream();
+		liveGenPromise = null;
 		statusUpdater?.(idleStatus());
 	}
 
@@ -118,6 +122,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 		notify?: (msg: string, type: string) => void,
 	) {
 		stopPlayback();
+		const epoch = ++playbackEpoch;
 		speaking = true;
 		statusUpdater?.(`🔊 ⏳ loading...`);
 
@@ -156,7 +161,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 							statusUpdater?.(`🔊 ▶ streaming ${langLabel} [${current}/${total}]`);
 							player.write(samples);
 						},
-						() => !speaking,
+						() => !speaking || playbackEpoch !== epoch,
 					);
 
 					statusUpdater?.(`🔊 ▶ playing ${langLabel}`);
@@ -165,7 +170,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 				} else {
 					statusUpdater?.(`🔊 ▶ generating ${langLabel} (fallback)...`);
 					const { samples, sampleRate: sr } = engine.generate(cleanText, language);
-					if (!speaking) return;
+					if (!speaking || playbackEpoch !== epoch) return;
 					statusUpdater?.(`🔊 ▶ playing ${langLabel} (fallback)`);
 					currentPlayback = await playAudio(samples, sr);
 					await currentPlayback.done;
@@ -174,9 +179,11 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 				const msg = err instanceof Error ? err.message : String(err);
 				notify?.(`TTS error: ${msg}`, "error");
 			} finally {
-				currentPlayback = null;
-				speaking = false;
-				statusUpdater?.(idleStatus());
+				if (playbackEpoch === epoch) {
+					currentPlayback = null;
+					speaking = false;
+					statusUpdater?.(idleStatus());
+				}
 			}
 		})();
 	}
@@ -221,16 +228,17 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 	/** Start the background generation loop that drains liveSentenceQueue */
 	function startLiveGenLoop() {
 		if (liveGenPromise) return; // already running
+		const epoch = playbackEpoch;
 		liveGenPromise = (async () => {
 			try {
 				const engine = await ensureTts();
-				while (liveStreamActive || liveSentenceQueue.length > 0) {
+				while ((!liveStreamDone || liveSentenceQueue.length > 0) && playbackEpoch === epoch) {
 					if (liveSentenceQueue.length === 0) {
 						// Wait a bit for more sentences
 						await new Promise(r => setTimeout(r, 50));
 						continue;
 					}
-					if (!speaking) break;
+					if (!speaking || playbackEpoch !== epoch) break;
 
 					// Detect language: if forced, use immediately; if auto, buffer ~200 chars
 					if (!liveLanguage) {
@@ -260,9 +268,10 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 
 					const chunks = splitIntoChunks(cleaned);
 					for (const chunk of chunks) {
-						if (!speaking) break;
+						if (!speaking || playbackEpoch !== epoch) break;
 						await new Promise(r => setImmediate(r));
 						let samples = engine.generate(chunk, liveLanguage).samples;
+						if (playbackEpoch !== epoch) break;
 						samples = trimSilence(samples, liveSentenceCount > 0, true);
 						livePlayer.write(samples);
 						liveSentenceCount++;
@@ -273,39 +282,53 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 			} catch (_err) {
 				// silently stop on error
 			} finally {
-				if (livePlayer) {
-					livePlayer.end();
-					const langLabel = liveLanguage === "pl" ? "PL" : "EN";
-					statusUpdater?.(`🔊 ▶ playing ${langLabel}`);
-					await livePlayer.done;
+				// Only clean up global state if we're still the active generation
+				if (playbackEpoch === epoch) {
+					if (livePlayer) {
+						livePlayer.end();
+						const langLabel = liveLanguage === "pl" ? "PL" : "EN";
+						statusUpdater?.(`🔊 ▶ playing ${langLabel}`);
+						await livePlayer.done;
+					}
+					livePlayer = null;
+					currentPlayback = null;
+					speaking = false;
+					liveGenPromise = null;
+					statusUpdater?.(idleStatus());
 				}
-				livePlayer = null;
-				currentPlayback = null;
-				speaking = false;
-				liveGenPromise = null;
-				statusUpdater?.(idleStatus());
+				// If epoch changed, stopPlayback() already killed our player
+				// and cleared liveGenPromise — nothing to clean up.
 			}
 		})();
 	}
 
 	function stopLiveStream() {
 		liveStreamActive = false;
+		liveStreamDone = false;
 		liveBuffer = "";
 		liveSentenceQueue = [];
 		liveLanguage = null;
 		liveSentenceCount = 0;
+		livePlayer = null;
 	}
 
 	// --- Events ---
 
 	pi.on("message_start", async (event) => {
 		if (event.message?.role === "assistant" && autoRead) {
-			// Stop any ongoing playback and start live stream
-			stopPlayback();
-			stopLiveStream();
-			liveStreamActive = true;
-			speaking = true;
-			statusUpdater?.(`🔊 ⏳ listening...`);
+			if (speaking && liveGenPromise && !liveStreamDone) {
+				// Same agent turn — gen loop is still alive and waiting.
+				// Just re-enable streaming; audio continues seamlessly.
+				liveStreamActive = true;
+			} else {
+				// Fresh start (first message, or new turn after agent_end)
+				stopPlayback();
+				stopLiveStream();
+				playbackEpoch++;
+				liveStreamActive = true;
+				speaking = true;
+				statusUpdater?.(`🔊 ⏳ listening...`);
+			}
 		}
 	});
 
@@ -352,8 +375,11 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("agent_end", async (_event, _ctx) => {
-		// If live stream was active, it already handled TTS — nothing to do.
-		// If autoRead is off or live stream wasn't started, also nothing.
+		// Signal the gen loop that no more messages are coming.
+		// It will drain remaining sentences and stop naturally.
+		if (liveGenPromise) {
+			liveStreamDone = true;
+		}
 	});
 
 	pi.on("session_shutdown", async () => {
@@ -614,21 +640,25 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 			const lang = params.language || "auto";
 			const detectedLang = lang === "auto" ? detectLanguage(text) : lang;
 
+			stopPlayback();
+			const epoch = ++playbackEpoch;
 			try {
 				const engine = await ensureTts();
 				const { samples, sampleRate } = engine.generate(text, detectedLang as DetectedLanguage);
 				currentPlayback = await playAudio(samples, sampleRate);
 				speaking = true;
 				await currentPlayback.done;
-				speaking = false;
-				currentPlayback = null;
+				if (playbackEpoch === epoch) {
+					speaking = false;
+					currentPlayback = null;
+				}
 
 				return {
 					content: [{ type: "text", text: `Spoke text aloud (${detectedLang}).` }],
 					details: { language: detectedLang, length: text.length },
 				};
 			} catch (err) {
-				speaking = false;
+				if (playbackEpoch === epoch) speaking = false;
 				const msg = err instanceof Error ? err.message : String(err);
 				return {
 					content: [{ type: "text", text: `TTS error: ${msg}` }],
