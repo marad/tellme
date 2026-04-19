@@ -11,9 +11,9 @@ import { Type } from "@sinclair/typebox";
 
 import { DEFAULT_CONFIG, KOKORO_VOICES, resolveVoiceId, type TellMeConfig } from "../../core/config.js";
 import { TellMeTts } from "../../core/tts-engine.js";
-import { playAudio, type PlaybackHandle } from "../../core/audio-player.js";
+import { playAudio, createStreamingPlayer, type PlaybackHandle, type StreamingPlayer } from "../../core/audio-player.js";
 import { detectLanguage, type DetectedLanguage } from "../../core/language-detect.js";
-import { prepareForSpeech } from "../../core/text-prep.js";
+import { prepareForSpeech, splitIntoChunks } from "../../core/text-prep.js";
 import { ensureAllModels, isKokoroReady, isPiperPlReady } from "../../core/model-manager.js";
 
 export default function tellMeExtension(pi: ExtensionAPI) {
@@ -24,6 +24,15 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 	let lastAssistantText: string | null = null;
 	let initPromise: Promise<void> | null = null;
 	let speaking = false;
+	let statusUpdater: ((status: string) => void) | null = null;
+
+	function idleStatus() {
+		const engines = [];
+		if (isKokoroReady(config)) engines.push("EN");
+		if (isPiperPlReady(config)) engines.push("PL");
+		if (engines.length === 0) return "";
+		return `🔊 ${engines.join("+")}${autoRead ? " [auto]" : ""}`;
+	}
 
 	// --- Lazy TTS initialization ---
 
@@ -53,20 +62,21 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 			currentPlayback = null;
 		}
 		speaking = false;
+		statusUpdater?.(idleStatus());
 	}
 
 	/**
-	 * Start speaking text in the background. Does NOT block.
-	 * Returns immediately after launching playback.
+	 * Start speaking text in the background using chunked streaming.
+	 * Splits text into sentences, generates audio chunk by chunk,
+	 * and pipes each chunk to speaker immediately — so the first
+	 * sentence starts playing while later ones are still generating.
 	 */
 	function speakInBackground(
 		text: string,
 		notify?: (msg: string, type: string) => void,
 	) {
-		// Stop any current playback first
 		stopPlayback();
 
-		// Launch async work without awaiting
 		(async () => {
 			try {
 				const engine = await ensureTts();
@@ -79,21 +89,50 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 
 				const language: DetectedLanguage =
 					config.language === "auto" ? detectLanguage(cleanText) : config.language;
+				const langLabel = language === "pl" ? "PL" : "EN";
+
+				const chunks = splitIntoChunks(cleanText);
+				if (chunks.length === 0) return;
 
 				speaking = true;
-				const { samples, sampleRate } = engine.generate(cleanText, language);
 
-				// Could have been stopped during generation
-				if (!speaking) return;
+				const sampleRate = engine.getSampleRate(language);
+				const player = await createStreamingPlayer(sampleRate);
 
-				currentPlayback = await playAudio(samples, sampleRate);
-				await currentPlayback.done;
+				if (player) {
+					const total = chunks.length;
+					let current = 0;
+					statusUpdater?.(`🔊 ▶ streaming ${langLabel} [1/${total}]`);
+
+					currentPlayback = { done: player.done, stop: () => player.stop() };
+
+					engine.generateChunked(chunks, language,
+						(samples) => {
+							current++;
+							statusUpdater?.(`🔊 ▶ streaming ${langLabel} [${current}/${total}]`);
+							player.write(samples);
+						},
+						() => !speaking,
+					);
+
+					statusUpdater?.(`🔊 ▶ playing ${langLabel}`);
+					player.end();
+					await player.done;
+				} else {
+					statusUpdater?.(`🔊 ▶ generating ${langLabel} (fallback)...`);
+					const { samples, sampleRate: sr } = engine.generate(cleanText, language);
+					if (!speaking) return;
+					statusUpdater?.(`🔊 ▶ playing ${langLabel} (fallback)`);
+					currentPlayback = await playAudio(samples, sr);
+					await currentPlayback.done;
+				}
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
 				notify?.(`TTS error: ${msg}`, "error");
 			} finally {
 				currentPlayback = null;
 				speaking = false;
+				statusUpdater?.(idleStatus());
 			}
 		})();
 	}
@@ -155,6 +194,8 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 		lastAssistantText = null;
 		stopPlayback();
 
+		statusUpdater = (s: string) => ctx.ui.setStatus("tellme", s);
+
 		for (const entry of ctx.sessionManager.getEntries()) {
 			if (entry.type === "custom" && entry.customType === "tellme-config") {
 				const data = entry.data as any;
@@ -165,12 +206,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 			}
 		}
 
-		if (isKokoroReady(config) || isPiperPlReady(config)) {
-			const engines = [];
-			if (isKokoroReady(config)) engines.push("EN");
-			if (isPiperPlReady(config)) engines.push("PL");
-			ctx.ui.setStatus("tellme", `🔊 ${engines.join("+")}${autoRead ? " [auto]" : ""}`);
-		}
+		statusUpdater(idleStatus());
 	});
 
 	// --- Commands (all non-blocking) ---
@@ -205,11 +241,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 		handler: async (_args, ctx) => {
 			autoRead = !autoRead;
 			pi.appendEntry("tellme-config", { autoRead, enVoice: config.enVoice, speed: config.speed });
-
-			const engines = [];
-			if (isKokoroReady(config)) engines.push("EN");
-			if (isPiperPlReady(config)) engines.push("PL");
-			ctx.ui.setStatus("tellme", `🔊 ${engines.join("+")}${autoRead ? " [auto]" : ""}`);
+			statusUpdater?.(idleStatus());
 			ctx.ui.notify(`Auto-read: ${autoRead ? "ON ✅" : "OFF ❌"}`, "info");
 		},
 	});
@@ -257,10 +289,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 				tts = null;
 				initPromise = null;
 
-				const engines = [];
-				if (isKokoroReady(config)) engines.push("EN");
-				if (isPiperPlReady(config)) engines.push("PL");
-				ctx.ui.setStatus("tellme", `🔊 ${engines.join("+")}${autoRead ? " [auto]" : ""}`);
+				statusUpdater?.(idleStatus());
 				ctx.ui.notify("TTS models ready! ✅", "success");
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);

@@ -16,9 +16,9 @@
 import { DEFAULT_CONFIG, KOKORO_VOICES, resolveVoiceId, type TellMeConfig } from "../core/config.js";
 import { ensureAllModels, isKokoroReady, isPiperPlReady, type DownloadProgress } from "../core/model-manager.js";
 import { TellMeTts } from "../core/tts-engine.js";
-import { playAudio } from "../core/audio-player.js";
+import { playAudio, createStreamingPlayer } from "../core/audio-player.js";
 import { detectLanguage } from "../core/language-detect.js";
-import { prepareForSpeech } from "../core/text-prep.js";
+import { prepareForSpeech, splitIntoChunks } from "../core/text-prep.js";
 
 function printUsage() {
 	console.log(`
@@ -158,12 +158,38 @@ async function main() {
 	const tts = new TellMeTts(config);
 	await tts.init();
 
-	const { samples, sampleRate } = tts.generate(text, language);
-	const handle = await playAudio(samples, sampleRate);
+	const chunks = splitIntoChunks(text);
+	if (chunks.length === 0) {
+		console.error("Nothing to speak.");
+		process.exit(1);
+	}
 
-	process.on("SIGINT", () => { handle.stop(); process.exit(0); });
+	// Try streaming playback: generate chunk by chunk, pipe to speaker
+	const sampleRate = tts.getSampleRate(language);
+	const player = await createStreamingPlayer(sampleRate);
 
-	await handle.done;
+	let stopped = false;
+	process.on("SIGINT", () => {
+		stopped = true;
+		player?.stop();
+		process.exit(0);
+	});
+
+	if (player) {
+		tts.generateChunked(chunks, language,
+			(samples) => player.write(samples),
+			() => stopped,
+		);
+		player.end();
+		await player.done;
+	} else {
+		// Fallback: generate all, play with system command
+		const { samples, sampleRate: sr } = tts.generate(text, language);
+		const handle = await playAudio(samples, sr);
+		process.on("SIGINT", () => { handle.stop(); process.exit(0); });
+		await handle.done;
+	}
+
 	tts.free();
 }
 

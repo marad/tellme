@@ -142,6 +142,33 @@ export class TellMeTts {
 		};
 	}
 
+	/**
+	 * Generate audio for an array of text chunks, calling onChunk
+	 * after each one so the caller can stream to a speaker.
+	 * Returns when all chunks have been generated (playback may still
+	 * be draining in the speaker buffer).
+	 */
+	generateChunked(
+		chunks: string[],
+		language: DetectedLanguage,
+		onChunk: (samples: Float32Array) => void,
+		shouldStop?: () => boolean,
+	): { sampleRate: number } {
+		const { engine, speakerId } = this.getEngine(language);
+		for (const chunk of chunks) {
+			if (shouldStop?.()) break;
+			const samples = engine.generate(chunk, this.config.speed, speakerId);
+			if (shouldStop?.()) break;
+			onChunk(samples);
+		}
+		return { sampleRate: engine.sampleRate };
+	}
+
+	getSampleRate(language: DetectedLanguage): number {
+		const { engine } = this.getEngine(language);
+		return engine.sampleRate;
+	}
+
 	get engines(): { kokoro: boolean; piper: boolean } {
 		return {
 			kokoro: this.kokoroTts !== null,

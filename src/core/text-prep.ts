@@ -200,6 +200,53 @@ function codeToWords(code: string): string {
 }
 
 /**
+ * Split prepared text into sentence-sized chunks for streaming TTS.
+ * Each chunk is short enough for fast generation but long enough
+ * to sound natural.
+ */
+export function splitIntoChunks(text: string): string[] {
+	// First split on paragraph breaks
+	const paragraphs = text.split(/\n\n+/).map(p => p.trim()).filter(Boolean);
+
+	const chunks: string[] = [];
+
+	for (const para of paragraphs) {
+		// Split paragraph into sentences on . ! ? followed by a space
+		const sentences = para.split(/(?<=[.!?])\s+/).filter(s => s.trim());
+
+		let buffer = "";
+		for (const sentence of sentences) {
+			const trimmed = sentence.trim();
+			if (!trimmed) continue;
+
+			if (!buffer) {
+				buffer = trimmed;
+			} else if (buffer.length + trimmed.length < 120) {
+				buffer += " " + trimmed;
+			} else {
+				chunks.push(cleanChunk(buffer));
+				buffer = trimmed;
+			}
+		}
+		if (buffer.trim()) {
+			chunks.push(cleanChunk(buffer));
+		}
+	}
+
+	return chunks.filter(c => c.length > 0);
+}
+
+function cleanChunk(text: string): string {
+	return text
+		.replace(/\.{2,}/g, ".")
+		.replace(/\.\s*\./g, ".")
+		.replace(/^\s*\.\s*/, "")
+		.replace(/\n/g, " ")
+		.replace(/\s{2,}/g, " ")
+		.trim();
+}
+
+/**
  * Legacy alias for backward compatibility.
  */
 export function stripMarkdown(text: string): string {
