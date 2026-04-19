@@ -271,6 +271,75 @@ See [the docs](https://example.com/docs) for more info ✅`;
 		const result = prepareForSpeech(input);
 		expect(result).toBe("");
 	});
+
+	// -- Number+unit separation --
+
+	it("separates number from unit", () => {
+		expect(prepareForSpeech("Takes 500ms to run.")).toContain("500 ms");
+		expect(prepareForSpeech("Needs 4GB of RAM.")).toContain("4 GB");
+		expect(prepareForSpeech("Running at 2GHz.")).toContain("2 GHz");
+	});
+
+	it("preserves ordinals", () => {
+		const result = prepareForSpeech("The 1st, 2nd, 3rd, and 4th items.");
+		expect(result).toContain("1st");
+		expect(result).toContain("2nd");
+		expect(result).toContain("3rd");
+		expect(result).toContain("4th");
+	});
+
+	it("handles decimal+unit", () => {
+		expect(prepareForSpeech("Clock at 2.5GHz.")).toContain("2.5 GHz");
+	});
+
+	// -- English shorthands --
+
+	it("expands e.g. to for example", () => {
+		const result = prepareForSpeech("Use a tool, e.g. vitest.");
+		expect(result).toContain("for example");
+		expect(result).not.toContain("e.g.");
+	});
+
+	it("expands i.e. to that is", () => {
+		const result = prepareForSpeech("The runtime, i.e. Node.js.");
+		expect(result).toContain("that is");
+		expect(result).not.toContain("i.e.");
+	});
+
+	it("expands vs. to versus", () => {
+		const result = prepareForSpeech("Jest vs. Vitest.");
+		expect(result).toContain("versus");
+	});
+
+	// -- Polish shorthands --
+
+	it("expands np. to na przyk\u0142ad", () => {
+		const result = prepareForSpeech("U\u017cyj narz\u0119dzia, np. vitest.");
+		expect(result).toContain("na przyk\u0142ad");
+		expect(result).not.toContain("np.");
+	});
+
+	it("expands tj. to to jest", () => {
+		const result = prepareForSpeech("\u015arodowisko, tj. Node.");
+		expect(result).toContain("to jest");
+		expect(result).not.toContain("tj.");
+	});
+
+	it("expands m.in. to mi\u0119dzy innymi", () => {
+		const result = prepareForSpeech("Obs\u0142uguje m.in. TypeScript.");
+		expect(result).toContain("mi\u0119dzy innymi");
+		expect(result).not.toContain("m.in.");
+	});
+
+	it("expands itd. to i tak dalej", () => {
+		const result = prepareForSpeech("Pliki, foldery, itd.");
+		expect(result).toContain("i tak dalej");
+	});
+
+	it("expands itp. to i tym podobne", () => {
+		const result = prepareForSpeech("Kolory, rozmiary itp.");
+		expect(result).toContain("i tym podobne");
+	});
 });
 
 // ── splitIntoChunks ──
@@ -283,15 +352,19 @@ describe("splitIntoChunks", () => {
 	it("returns single chunk for short text", () => {
 		const chunks = splitIntoChunks("Hello world.");
 		expect(chunks).toHaveLength(1);
-		expect(chunks[0]).toBe("Hello world.");
+		expect(chunks[0].text).toBe("Hello world.");
+		expect(chunks[0].pauseBefore).toBe(0);
 	});
 
-	it("splits on paragraph breaks", () => {
+	it("splits on paragraph breaks with pause hints", () => {
 		const text = "First paragraph here.\n\nSecond paragraph here.";
 		const chunks = splitIntoChunks(text);
 		expect(chunks.length).toBeGreaterThanOrEqual(2);
-		expect(chunks[0]).toContain("First");
-		expect(chunks[chunks.length - 1]).toContain("Second");
+		expect(chunks[0].text).toContain("First");
+		expect(chunks[0].pauseBefore).toBe(0);
+		// Second paragraph chunk should have a paragraph pause
+		const secondParaChunk = chunks.find(c => c.text.includes("Second"))!;
+		expect(secondParaChunk.pauseBefore).toBeGreaterThan(0);
 	});
 
 	it("splits long paragraphs into sentence-sized chunks", () => {
@@ -302,7 +375,7 @@ describe("splitIntoChunks", () => {
 		expect(chunks.length).toBeGreaterThan(1);
 		// No chunk should be excessively long
 		for (const chunk of chunks) {
-			expect(chunk.length).toBeLessThan(300);
+			expect(chunk.text.length).toBeLessThan(300);
 		}
 	});
 
@@ -311,23 +384,23 @@ describe("splitIntoChunks", () => {
 		const chunks = splitIntoChunks(text);
 		// These are short enough to be merged into one chunk
 		expect(chunks).toHaveLength(1);
-		expect(chunks[0]).toContain("Hi");
-		expect(chunks[0]).toContain("Ok");
-		expect(chunks[0]).toContain("Yes");
+		expect(chunks[0].text).toContain("Hi");
+		expect(chunks[0].text).toContain("Ok");
+		expect(chunks[0].text).toContain("Yes");
 	});
 
 	it("handles text without sentence-ending punctuation", () => {
 		const text = "This text has no period at the end";
 		const chunks = splitIntoChunks(text);
 		expect(chunks).toHaveLength(1);
-		expect(chunks[0]).toBe("This text has no period at the end");
+		expect(chunks[0].text).toBe("This text has no period at the end");
 	});
 
 	it("produces clean chunks without leading dots", () => {
 		const text = ". First item.\n\n. Second item.";
 		const chunks = splitIntoChunks(text);
 		for (const chunk of chunks) {
-			expect(chunk).not.toMatch(/^\./);
+			expect(chunk.text).not.toMatch(/^\./);
 		}
 	});
 
@@ -335,7 +408,28 @@ describe("splitIntoChunks", () => {
 		const text = "Hello.\n\n\n\nWorld.";
 		const chunks = splitIntoChunks(text);
 		for (const chunk of chunks) {
-			expect(chunk.length).toBeGreaterThan(0);
+			expect(chunk.text.length).toBeGreaterThan(0);
 		}
+	});
+
+	it("assigns zero pause to chunks within the same paragraph", () => {
+		const longPara = Array.from({ length: 5 }, (_, i) =>
+			`Sentence ${i + 1} is moderately long and adds to the paragraph.`
+		).join(" ");
+		const chunks = splitIntoChunks(longPara);
+		expect(chunks.length).toBeGreaterThan(1);
+		// All chunks in the same paragraph: first has 0, rest also 0
+		for (const chunk of chunks) {
+			expect(chunk.pauseBefore).toBe(0);
+		}
+	});
+
+	it("assigns paragraph pause to first chunk of each new paragraph", () => {
+		const text = "Paragraph one.\n\nParagraph two.\n\nParagraph three.";
+		const chunks = splitIntoChunks(text);
+		expect(chunks).toHaveLength(3);
+		expect(chunks[0].pauseBefore).toBe(0);
+		expect(chunks[1].pauseBefore).toBeGreaterThan(0);
+		expect(chunks[2].pauseBefore).toBeGreaterThan(0);
 	});
 });

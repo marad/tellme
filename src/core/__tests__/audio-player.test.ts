@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { trimSilence } from "../audio-player.js";
+import { trimSilence, generateSilence } from "../audio-player.js";
 
 describe("trimSilence", () => {
 	it("returns same array when no trimming requested", () => {
@@ -98,5 +98,31 @@ describe("trimSilence", () => {
 		// ~50 + 100 + ~50 = ~200
 		expect(result.length).toBeGreaterThanOrEqual(150);
 		expect(result.length).toBeLessThanOrEqual(300);
+	});
+});
+
+describe("generateSilence", () => {
+	it("generates correct number of samples for given duration", () => {
+		// 22050 Hz, 1000ms = 22050 samples
+		const silence = generateSilence(22050, 1000);
+		expect(silence.length).toBe(22050);
+	});
+
+	it("generates all-zero samples", () => {
+		const silence = generateSilence(24000, 500);
+		for (let i = 0; i < silence.length; i++) {
+			expect(silence[i]).toBe(0);
+		}
+	});
+
+	it("generates correct duration for common sample rates", () => {
+		// 24000 Hz, 350ms = 8400 samples
+		expect(generateSilence(24000, 350).length).toBe(8400);
+		// 22050 Hz, 350ms = round(7717.5) = 7718 samples
+		expect(generateSilence(22050, 350).length).toBe(7718);
+	});
+
+	it("generates zero-length for 0ms duration", () => {
+		expect(generateSilence(24000, 0).length).toBe(0);
 	});
 });
