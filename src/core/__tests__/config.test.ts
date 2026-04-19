@@ -67,6 +67,34 @@ describe("loadConfig", () => {
 		// modelsDir present
 		expect(config.modelsDir).toContain(".tellme");
 	});
+
+	it("returns a separate shortcuts object — never the DEFAULT_CONFIG reference", async () => {
+		const { loadConfig, DEFAULT_CONFIG } = await import("../config.js");
+		const config = loadConfig();
+		expect(config.shortcuts).not.toBe(DEFAULT_CONFIG.shortcuts);
+	});
+
+	it("does not mutate DEFAULT_CONFIG.shortcuts", async () => {
+		const { loadConfig, DEFAULT_CONFIG } = await import("../config.js");
+		const originalSpeak = DEFAULT_CONFIG.shortcuts.speak;
+		const originalClipboard = DEFAULT_CONFIG.shortcuts.clipboard;
+
+		// Call loadConfig — must not mutate the module-level constant
+		loadConfig();
+
+		expect(DEFAULT_CONFIG.shortcuts.speak).toBe(originalSpeak);
+		expect(DEFAULT_CONFIG.shortcuts.clipboard).toBe(originalClipboard);
+	});
+
+	it("returns independent configs on successive calls", async () => {
+		const { loadConfig } = await import("../config.js");
+		const a = loadConfig();
+		const b = loadConfig();
+
+		// Mutating one must not affect the other
+		a.shortcuts.speak = "__test__";
+		expect(b.shortcuts.speak).not.toBe("__test__");
+	});
 });
 
 describe("DEFAULT_CONFIG", () => {

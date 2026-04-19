@@ -108,7 +108,7 @@ const PERSISTABLE: PersistableKeys[] = ["language", "enVoice", "plModel", "speed
  * Invalid or missing file → returns defaults.
  */
 export function loadConfig(): TellMeConfig {
-	const config = { ...DEFAULT_CONFIG };
+	const config = { ...DEFAULT_CONFIG, shortcuts: { ...DEFAULT_CONFIG.shortcuts } };
 	try {
 		if (existsSync(CONFIG_PATH)) {
 			const raw = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
