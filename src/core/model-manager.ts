@@ -34,7 +34,7 @@ export function isKokoroReady(config: TellMeConfig): boolean {
 
 /** Check if Piper PL model is downloaded */
 export function isPiperPlReady(config: TellMeConfig): boolean {
-	const variant = config.plModel;
+	const variant = config.plVoice;
 	const modelInfo = PIPER_PL_MODELS[variant];
 	if (!modelInfo) return false;
 	const dirName = `vits-piper-pl_PL-${variant}`;
@@ -57,7 +57,7 @@ export function getKokoroPaths(config: TellMeConfig): ModelPaths["kokoro"] {
 /** Get paths to Piper PL model files */
 export function getPiperPlPaths(config: TellMeConfig): ModelPaths["piper"] {
 	if (!isPiperPlReady(config)) return null;
-	const variant = config.plModel;
+	const variant = config.plVoice;
 	const modelInfo = PIPER_PL_MODELS[variant];
 	if (!modelInfo) return null;
 	const dirName = `vits-piper-pl_PL-${variant}`;
@@ -175,7 +175,7 @@ export async function ensureKokoro(config: TellMeConfig, onProgress?: ProgressCa
 /** Download Piper PL model if not already present */
 export async function ensurePiperPl(config: TellMeConfig, onProgress?: ProgressCallback): Promise<void> {
 	if (isPiperPlReady(config)) return;
-	const variant = config.plModel;
+	const variant = config.plVoice;
 	const modelInfo = PIPER_PL_MODELS[variant];
 	if (!modelInfo) throw new Error(`Unknown Polish model variant: ${variant}`);
 	const dirName = `vits-piper-pl_PL-${variant}`;

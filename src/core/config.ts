@@ -9,8 +9,8 @@ export interface TellMeConfig {
 	language: "auto" | "en" | "pl";
 	/** English voice (Kokoro speaker name) */
 	enVoice: string;
-	/** Polish voice model variant */
-	plModel: "meski_wg_glos-medium" | "justyna_wg_glos-medium";
+	/** Polish voice (Piper speaker variant) */
+	plVoice: "meski_wg_glos-medium" | "justyna_wg_glos-medium";
 	/** Speech speed (0.5 - 2.0) */
 	speed: number;
 	/** Auto-read assistant messages in Pi extension */
@@ -28,7 +28,7 @@ export const DEFAULT_CONFIG: TellMeConfig = {
 	modelsDir: join(homedir(), ".tellme", "models"),
 	language: "auto",
 	enVoice: "af_bella",
-	plModel: "meski_wg_glos-medium",
+	plVoice: "meski_wg_glos-medium",
 	speed: 1.0,
 	autoRead: false,
 	shortcuts: {
@@ -100,8 +100,8 @@ export function isMac(): boolean {
 const CONFIG_PATH = join(homedir(), ".tellme", "config.json");
 
 /** User-facing config keys that get persisted */
-type PersistableKeys = "language" | "enVoice" | "plModel" | "speed" | "autoRead" | "shortcuts";
-const PERSISTABLE: PersistableKeys[] = ["language", "enVoice", "plModel", "speed", "autoRead", "shortcuts"];
+type PersistableKeys = "language" | "enVoice" | "plVoice" | "speed" | "autoRead" | "shortcuts";
+const PERSISTABLE: PersistableKeys[] = ["language", "enVoice", "plVoice", "speed", "autoRead", "shortcuts"];
 
 /**
  * Load config from ~/.tellme/config.json merged over defaults.
@@ -114,7 +114,8 @@ export function loadConfig(): TellMeConfig {
 			const raw = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
 			if (raw.language === "auto" || raw.language === "en" || raw.language === "pl") config.language = raw.language;
 			if (typeof raw.enVoice === "string" && raw.enVoice in KOKORO_VOICES) config.enVoice = raw.enVoice;
-			if (typeof raw.plModel === "string" && raw.plModel in PIPER_PL_MODELS) config.plModel = raw.plModel;
+			if (typeof raw.plVoice === "string" && raw.plVoice in PIPER_PL_MODELS) config.plVoice = raw.plVoice;
+			else if (typeof raw.plModel === "string" && raw.plModel in PIPER_PL_MODELS) config.plVoice = raw.plModel;
 			if (typeof raw.speed === "number" && raw.speed >= 0.5 && raw.speed <= 2.0) config.speed = raw.speed;
 			if (typeof raw.autoRead === "boolean") config.autoRead = raw.autoRead;
 			if (raw.shortcuts && typeof raw.shortcuts === "object") {

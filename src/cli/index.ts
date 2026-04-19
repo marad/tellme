@@ -33,7 +33,7 @@ Options:
   --lang <en|pl|auto> Force language (default: auto)
   --voice <name>      Kokoro EN voice (default: from config)
   --speed <0.5-2.0>   Speech speed (default: from config)
-  --pl-model <name>   Polish model: meski_wg_glos-medium, justyna_wg_glos-medium
+  --pl-voice <name>  Polish voice: meski_wg_glos-medium, justyna_wg_glos-medium
   --list-voices       List available Kokoro voices
   --status            Show model download status
   --raw               Skip text preparation (read as-is)
@@ -49,7 +49,7 @@ function parseArgs(argv: string[]) {
 		language: defaults.language,
 		voice: defaults.enVoice,
 		speed: defaults.speed,
-		plModel: defaults.plModel,
+		plVoice: defaults.plVoice,
 		listVoices: false,
 		status: false,
 		raw: false,
@@ -65,7 +65,7 @@ function parseArgs(argv: string[]) {
 			case "--lang": result.language = argv[++i] as "auto" | "en" | "pl"; break;
 			case "--voice": result.voice = argv[++i]; break;
 			case "--speed": result.speed = parseFloat(argv[++i]); break;
-			case "--pl-model": result.plModel = argv[++i] as TellMeConfig["plModel"]; break;
+			case "--pl-voice": result.plVoice = argv[++i] as TellMeConfig["plVoice"]; break;
 			case "--list-voices": result.listVoices = true; break;
 			case "--status": result.status = true; break;
 			case "--raw": result.raw = true; break;
@@ -97,7 +97,7 @@ async function main() {
 		...loadConfig(),
 		language: args.language,
 		speed: args.speed,
-		plModel: args.plModel as TellMeConfig["plModel"],
+		plVoice: args.plVoice as TellMeConfig["plVoice"],
 		enVoice: args.voice,
 	};
 
@@ -116,7 +116,7 @@ async function main() {
 	if (args.status) {
 		console.log(`Models directory: ${config.modelsDir}`);
 		console.log(`Kokoro EN:  ${isKokoroReady(config) ? "✅ ready" : "❌ not downloaded"}`);
-		console.log(`Piper PL:   ${isPiperPlReady(config) ? "✅ ready" : "❌ not downloaded"} (${config.plModel})`);
+		console.log(`Piper PL:   ${isPiperPlReady(config) ? "✅ ready" : "❌ not downloaded"} (${config.plVoice})`);
 		process.exit(0);
 	}
 

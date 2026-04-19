@@ -61,7 +61,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 
 	/** Persist config to session entry + global ~/.tellme/config.json */
 	function persistConfig() {
-		pi.appendEntry("tellme-config", { autoRead, language: config.language, enVoice: config.enVoice, plModel: config.plModel, speed: config.speed });
+		pi.appendEntry("tellme-config", { autoRead, language: config.language, enVoice: config.enVoice, plVoice: config.plVoice, speed: config.speed });
 		saveConfig(config);
 	}
 
@@ -405,7 +405,8 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 				if (typeof data.autoRead === "boolean") autoRead = data.autoRead;
 				if (typeof data.enVoice === "string") config.enVoice = data.enVoice;
 				if (typeof data.speed === "number") config.speed = data.speed;
-				if (data.plModel) config.plModel = data.plModel;
+				if (data.plVoice) config.plVoice = data.plVoice;
+				else if (data.plModel) config.plVoice = data.plModel;
 				if (data.language === "auto" || data.language === "en" || data.language === "pl") config.language = data.language;
 			}
 		}
@@ -517,7 +518,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 			const labels = models.map(([key, m]) => `${m.label} (${key})`);
 
 			const choice = await ctx.ui.select(
-				`Current PL voice: ${config.plModel}. Pick:`,
+				`Current PL voice: ${config.plVoice}. Pick:`,
 				labels,
 			);
 
@@ -525,7 +526,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 				const idx = labels.indexOf(choice);
 				if (idx >= 0) {
 					const [key] = models[idx];
-					config.plModel = key as TellMeConfig["plModel"];
+					config.plVoice = key as TellMeConfig["plVoice"];
 					tts?.free();
 					tts = null;
 					initPromise = null;
@@ -576,7 +577,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 
 			const lines = [
 				`🔊 Tell Me`,
-				`Kokoro EN: ${kokoro ? "✅" : "❌"} | Piper PL: ${piper ? "✅" : "❌"} (${config.plModel})`,
+				`Kokoro EN: ${kokoro ? "✅" : "❌"} | Piper PL: ${piper ? "✅" : "❌"} (${config.plVoice})`,
 				`Voice: ${config.enVoice} | Speed: ${config.speed}x | Auto: ${autoRead ? "ON" : "OFF"}`,
 			];
 			ctx.ui.notify(lines.join("\n"), "info");
