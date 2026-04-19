@@ -40,12 +40,13 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 		const piper = isPiperPlReady(config);
 		if (!kokoro && !piper) return "";
 		const autoTag = autoRead ? " [auto]" : "";
-		if (config.language === "en") return `🔊 EN${autoTag}`;
-		if (config.language === "pl") return `🔊 PL${autoTag}`;
+		const speedTag = config.speed !== 1.0 ? ` ${config.speed}x` : "";
+		if (config.language === "en") return `🔊 EN${speedTag}${autoTag}`;
+		if (config.language === "pl") return `🔊 PL${speedTag}${autoTag}`;
 		const engines = [];
 		if (kokoro) engines.push("EN");
 		if (piper) engines.push("PL");
-		return `🔊 ${engines.join("+")}${autoTag}`;
+		return `🔊 ${engines.join("+")}${speedTag}${autoTag}`;
 	}
 
 	// --- Lazy TTS initialization ---
