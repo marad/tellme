@@ -122,6 +122,27 @@ function hasCommand(name: string): boolean {
 	return result;
 }
 
+// ── ffplay compatibility ──
+
+/**
+ * ffmpeg ≥ 7.x removed the `-ac` input option from ffplay;
+ * use `-ch_layout mono` instead. We probe once and cache.
+ */
+let _ffplayUsesChLayout: boolean | null = null;
+
+function ffplayChannelArgs(): string[] {
+	if (_ffplayUsesChLayout === null) {
+		// Probe: if `-ac 1` fails, use `-ch_layout mono`
+		const probe = spawnSync("ffplay", ["-ac", "1", "-nodisp", "-autoexit", "-loglevel", "error", "-f", "s16le", "-ar", "8000", "-i", "/dev/null"], {
+			stdio: ["pipe", "ignore", "pipe"],
+			timeout: 2000,
+		});
+		const stderr = probe.stderr?.toString() || "";
+		_ffplayUsesChLayout = probe.status !== 0 || stderr.includes("Option not found");
+	}
+	return _ffplayUsesChLayout ? ["-ch_layout", "mono"] : ["-ac", "1"];
+}
+
 // ── Subprocess streaming player ──
 
 interface StreamingCmd {
@@ -158,7 +179,8 @@ function findStreamingCmd(sampleRate: number): StreamingCmd | null {
 			cmd: "ffplay",
 			args: [
 				"-nodisp", "-autoexit", "-loglevel", "quiet",
-				"-f", "s16le", "-ar", String(sampleRate), "-ac", "1",
+				"-f", "s16le", "-ar", String(sampleRate),
+				...ffplayChannelArgs(),
 				"-i", "pipe:0",
 			],
 		};
