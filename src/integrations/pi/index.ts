@@ -46,6 +46,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 	let initPromise: Promise<void> | null = null;
 	let speaking = false;
 	let statusUpdater: ((status: string) => void) | null = null;
+	let workingIndicatorUpdater: ((options?: { frames: string[]; intervalMs?: number }) => void) | null = null;
 
 	// --- Live streaming TTS state ---
 	let liveStreamActive = false;
@@ -109,6 +110,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 		stopLiveStream();
 		liveGenPromise = null;
 		statusUpdater?.(idleStatus());
+		workingIndicatorUpdater?.();
 	}
 
 	/**
@@ -332,6 +334,10 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 				liveStreamActive = true;
 				speaking = true;
 				statusUpdater?.(`🔊 ⏳ listening...`);
+				workingIndicatorUpdater?.({
+					frames: ["🔈", "🔉", "🔊", "🔉"],
+					intervalMs: 300,
+				});
 			}
 		}
 	});
@@ -393,6 +399,9 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 		if (liveGenPromise) {
 			liveStreamDone = true;
 		}
+		// Restore default working indicator — it only shows during streaming,
+		// so this just cleans up for the next agent turn.
+		workingIndicatorUpdater?.();
 	});
 
 	pi.on("session_shutdown", async () => {
@@ -407,6 +416,7 @@ export default function tellMeExtension(pi: ExtensionAPI) {
 		stopPlayback();
 
 		statusUpdater = (s: string) => ctx.ui.setStatus("tellme", s);
+		workingIndicatorUpdater = (options) => ctx.ui.setWorkingIndicator(options);
 
 		for (const entry of ctx.sessionManager.getEntries()) {
 			if (entry.type === "custom" && entry.customType === "tellme-config") {
