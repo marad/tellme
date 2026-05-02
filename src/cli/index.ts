@@ -19,6 +19,9 @@ import { TellMeTts } from "../core/tts-engine.js";
 import { playAudio, createStreamingPlayer } from "../core/audio-player.js";
 import { detectLanguage } from "../core/language-detect.js";
 import { prepareForSpeech, splitIntoChunks } from "../core/text-prep.js";
+import { runDaemon } from "../core/daemon-server.js";
+import { tryDaemonRoute } from "../core/daemon-client.js";
+import { daemonStart, daemonStop, daemonStatus } from "./daemon-cmd.js";
 
 function printUsage() {
 	console.log(`
@@ -89,6 +92,24 @@ async function readStdin(): Promise<string> {
 }
 
 async function main() {
+	// Hidden subcommand used by `tellme daemon start` to fork the daemon.
+	// MUST short-circuit before any normal CLI parsing or daemon routing —
+	// otherwise the daemon process would itself try to talk to a daemon.
+	if (process.argv[2] === "__daemon-main__") {
+		await runDaemon();
+		return;
+	}
+
+	// Daemon control subcommands.
+	if (process.argv[2] === "daemon") {
+		const sub = process.argv[3];
+		if (sub === "start") { process.exit(await daemonStart()); }
+		if (sub === "stop") { process.exit(await daemonStop()); }
+		if (sub === "status") { process.exit(await daemonStatus()); }
+		console.error("Usage: tellme daemon <start|stop|status>");
+		process.exit(1);
+	}
+
 	const args = parseArgs(process.argv.slice(2));
 
 	if (args.help) { printUsage(); process.exit(0); }
@@ -143,6 +164,22 @@ async function main() {
 		text = await readStdin();
 	}
 	if (!text) { printUsage(); process.exit(1); }
+
+	// If a daemon is running, route through it. The daemon handles text
+	// preparation and synthesis itself; we return without ever loading models.
+	{
+		const code = await tryDaemonRoute(
+			{
+				text,
+				language: config.language,
+				voice: config.enVoice,
+				speed: config.speed,
+				raw: args.raw,
+			},
+			config,
+		);
+		if (code !== null) process.exit(code);
+	}
 
 	// Prepare text for speech
 	if (!args.raw) {
