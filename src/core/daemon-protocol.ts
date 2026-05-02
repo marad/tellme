@@ -9,6 +9,8 @@ import type { Readable, Writable } from "node:stream";
 
 export const PROTOCOL_VERSION = 1;
 
+const MAX_FRAME_SIZE = 16 * 1024 * 1024;
+
 // ── Client → server ──
 
 export interface SpeakRequest {
@@ -111,6 +113,11 @@ export async function* readMessages(stream: Readable): AsyncGenerator<any, void,
 		buf = (buf.length === 0 ? chunk : Buffer.concat([buf, chunk])) as Buffer<ArrayBuffer>;
 		while (buf.length >= 4) {
 			const len = buf.readUInt32BE(0);
+			if (len > MAX_FRAME_SIZE) {
+				error = new Error(`frame too large: ${len} bytes (max ${MAX_FRAME_SIZE} bytes)`);
+				ended = true;
+				break;
+			}
 			if (buf.length < 4 + len) break;
 			const json = buf.subarray(4, 4 + len).toString("utf-8");
 			buf = buf.subarray(4 + len);

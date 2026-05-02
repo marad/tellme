@@ -21,7 +21,7 @@ function findBinPath(): string {
 async function statusPing(): Promise<{ running: boolean; socketPath?: string; queueDepth?: number }> {
 	const { messages, ok } = await connectAndSend({ kind: "status", version: PROTOCOL_VERSION });
 	if (!ok || messages.length === 0) return { running: false };
-	const reply = messages.find((m: any) => m.kind === "status");
+	const reply = messages.find((m) => m.kind === "status");
 	if (reply) {
 		return { running: true, socketPath: reply.socketPath, queueDepth: reply.queueDepth };
 	}
@@ -43,9 +43,16 @@ export async function daemonStart(): Promise<number> {
 	});
 	proc.unref();
 
+	let earlyExit: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+	proc.once("exit", (code, signal) => { earlyExit = { code, signal }; });
+
 	// Poll for readiness up to ~5 seconds.
 	const deadline = Date.now() + 5000;
 	while (Date.now() < deadline) {
+		if (earlyExit) {
+			console.error(`Error: daemon exited early (code=${earlyExit.code}, signal=${earlyExit.signal})`);
+			return 1;
+		}
 		await new Promise((r) => setTimeout(r, 100));
 		const s = await statusPing();
 		if (s.running) {
@@ -55,6 +62,14 @@ export async function daemonStart(): Promise<number> {
 	}
 	console.error("Error: daemon did not start within 5s");
 	return 1;
+}
+
+function isAlive(pid: number): boolean {
+	try { process.kill(pid, 0); return true; }
+	catch (e: any) {
+		if (e?.code === "ESRCH") return false;
+		return true; // EPERM etc — process exists
+	}
 }
 
 export async function daemonStop(): Promise<number> {
@@ -78,9 +93,28 @@ export async function daemonStop(): Promise<number> {
 		catch { /* already dead */ }
 	}
 
-	const deadline = Date.now() + 5000;
-	while (Date.now() < deadline && existsSync(socketPath)) {
-		await new Promise((r) => setTimeout(r, 100));
+	if (pid !== null) {
+		const deadline = Date.now() + 5000;
+		while (Date.now() < deadline && isAlive(pid)) {
+			await new Promise((r) => setTimeout(r, 100));
+		}
+		if (isAlive(pid)) {
+			try { process.kill(pid, "SIGKILL"); }
+			catch { /* ignore */ }
+			const killDeadline = Date.now() + 2000;
+			while (Date.now() < killDeadline && isAlive(pid)) {
+				await new Promise((r) => setTimeout(r, 100));
+			}
+			if (isAlive(pid)) {
+				process.stderr.write(`Error: daemon process ${pid} did not exit after SIGKILL\n`);
+				return 1;
+			}
+		}
+	} else {
+		const deadline = Date.now() + 5000;
+		while (Date.now() < deadline && existsSync(socketPath)) {
+			await new Promise((r) => setTimeout(r, 100));
+		}
 	}
 
 	if (existsSync(socketPath)) {

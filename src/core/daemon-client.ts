@@ -9,7 +9,7 @@
 
 import { createConnection, type Socket } from "node:net";
 import { existsSync, unlinkSync } from "node:fs";
-import { PROTOCOL_VERSION, readMessages, writeMessage, type ClientMessage } from "./daemon-protocol.js";
+import { PROTOCOL_VERSION, readMessages, writeMessage, type ClientMessage, type ServerMessage } from "./daemon-protocol.js";
 import { getSocketPath } from "./daemon-paths.js";
 import type { TellMeConfig } from "./config.js";
 
@@ -29,7 +29,7 @@ export interface CliArgs {
  *     (caller falls back to in-process synthesis).
  *   - exit code (0 for done, 1 for error/version-mismatch, 130 for stopped).
  */
-export async function tryDaemonRoute(args: CliArgs, _config: TellMeConfig): Promise<number | null> {
+export async function tryDaemonRoute(args: CliArgs): Promise<number | null> {
 	const path = getSocketPath();
 	if (!existsSync(path)) return null;
 
@@ -75,14 +75,17 @@ export async function tryDaemonRoute(args: CliArgs, _config: TellMeConfig): Prom
 				resolved = 1;
 				break;
 			}
-			if (msg.kind === "ack") continue;
-			if (msg.kind === "done") { resolved = 0; break; }
-			if (msg.kind === "error") {
+			else if (msg.kind === "ack") continue;
+			else if (msg.kind === "done") { resolved = 0; break; }
+			else if (msg.kind === "error") {
 				console.error("Error:", msg.message);
 				resolved = 1;
 				break;
 			}
-			if (msg.kind === "stopped") { resolved = 130; break; }
+			else if (msg.kind === "stopped") { resolved = 130; break; }
+			else {
+				console.error(`Warning: unknown daemon message kind: ${(msg as any).kind}`);
+			}
 		}
 	} catch (err) {
 		console.error("Error: daemon connection failed:", (err as Error).message);
@@ -100,7 +103,7 @@ export async function tryDaemonRoute(args: CliArgs, _config: TellMeConfig): Prom
  * Connect, send one message, collect every reply until EOF, and return them.
  * Used by the `daemon` subcommands (status / stop probes).
  */
-export async function connectAndSend(req: ClientMessage): Promise<{ messages: any[]; ok: boolean }> {
+export async function connectAndSend(req: ClientMessage): Promise<{ messages: ServerMessage[]; ok: boolean }> {
 	const path = getSocketPath();
 	if (!existsSync(path)) return { messages: [], ok: false };
 
@@ -118,7 +121,7 @@ export async function connectAndSend(req: ClientMessage): Promise<{ messages: an
 		return { messages: [], ok: false };
 	}
 
-	const messages: any[] = [];
+	const messages: ServerMessage[] = [];
 	try {
 		for await (const msg of readMessages(socket)) {
 			messages.push(msg);

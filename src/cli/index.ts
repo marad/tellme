@@ -96,6 +96,10 @@ async function main() {
 	// MUST short-circuit before any normal CLI parsing or daemon routing —
 	// otherwise the daemon process would itself try to talk to a daemon.
 	if (process.argv[2] === "__daemon-main__") {
+		if (process.argv.length > 3) {
+			console.error("Error: __daemon-main__ takes no arguments");
+			process.exit(1);
+		}
 		await runDaemon();
 		return;
 	}
@@ -103,11 +107,13 @@ async function main() {
 	// Daemon control subcommands.
 	if (process.argv[2] === "daemon") {
 		const sub = process.argv[3];
-		if (sub === "start") { process.exit(await daemonStart()); }
-		if (sub === "stop") { process.exit(await daemonStop()); }
-		if (sub === "status") { process.exit(await daemonStatus()); }
-		console.error("Usage: tellme daemon <start|stop|status>");
-		process.exit(1);
+		if (sub === "start") process.exit(await daemonStart());
+		else if (sub === "stop") process.exit(await daemonStop());
+		else if (sub === "status") process.exit(await daemonStatus());
+		else {
+			console.error("Usage: tellme daemon <start|stop|status>");
+			process.exit(1);
+		}
 	}
 
 	const args = parseArgs(process.argv.slice(2));
@@ -176,7 +182,6 @@ async function main() {
 				speed: config.speed,
 				raw: args.raw,
 			},
-			config,
 		);
 		if (code !== null) process.exit(code);
 	}
