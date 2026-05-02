@@ -13,6 +13,7 @@ import { TellMeTts } from "./tts-engine.js";
 import { detectLanguage } from "./language-detect.js";
 import { prepareForSpeech, splitIntoChunks } from "./text-prep.js";
 import { createStreamingPlayer, playAudio, type StreamingPlayer } from "./audio-player.js";
+import { SentenceBuffer } from "./sentence-buffer.js";
 import {
 	PROTOCOL_VERSION,
 	readMessages,
@@ -148,12 +149,75 @@ async function createAudioSink(sampleRate: number): Promise<AudioSink> {
 	};
 }
 
+// ── Streaming channel ──
+
+interface StreamingChannel {
+	push(text: string): void;
+	end(): void;
+	kill(): void;
+	killed(): boolean;
+	[Symbol.asyncIterator](): AsyncIterator<string>;
+}
+
+function createStreamingChannel(): StreamingChannel {
+	const queue: string[] = [];
+	let ended = false;
+	let killed = false;
+	let resolveNext: (() => void) | null = null;
+
+	const wake = () => {
+		if (resolveNext) {
+			const r = resolveNext;
+			resolveNext = null;
+			r();
+		}
+	};
+
+	return {
+		push(text: string) {
+			if (ended || killed) return;
+			queue.push(text);
+			wake();
+		},
+		end() {
+			if (ended || killed) return;
+			ended = true;
+			wake();
+		},
+		kill() {
+			if (killed) return;
+			killed = true;
+			ended = true;
+			queue.length = 0;
+			wake();
+		},
+		killed() { return killed; },
+		[Symbol.asyncIterator]() {
+			return {
+				async next(): Promise<IteratorResult<string>> {
+					while (true) {
+						if (killed) return { value: undefined, done: true };
+						if (queue.length > 0) {
+							return { value: queue.shift()!, done: false };
+						}
+						if (ended) return { value: undefined, done: true };
+						await new Promise<void>((resolve) => { resolveNext = resolve; });
+					}
+				},
+			};
+		},
+	};
+}
+
 // ── Server ──
 
 interface QueueItem {
 	req: SpeakRequest;
 	socket: Socket;
 	resolved: boolean;
+	streaming?: StreamingChannel;
+	/** Per-connection cleanup invoked when worker finishes the item. */
+	onWorkerDone?: () => void;
 }
 
 export interface DaemonHandle {
@@ -187,6 +251,18 @@ export async function runDaemon(opts: RunDaemonOptions = {}): Promise<void> {
 export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHandle> {
 	const ttsFactory = opts.ttsFactory ?? defaultTtsFactory;
 	const installSignals = opts.installSignalHandlers ?? false;
+
+	// Read streaming env vars at startup so tests can override per-test.
+	const streamIdleMs = (() => {
+		const raw = process.env.TELLME_STREAM_IDLE_MS;
+		const n = raw ? parseInt(raw, 10) : NaN;
+		return Number.isFinite(n) && n > 0 ? n : 30000;
+	})();
+	const streamMaxMs = (() => {
+		const raw = process.env.TELLME_STREAM_MAX_MS;
+		const n = raw ? parseInt(raw, 10) : NaN;
+		return Number.isFinite(n) && n > 0 ? n : 300000;
+	})();
 
 	ensureDaemonDir();
 	const socketPath = getSocketPath();
@@ -228,12 +304,40 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 						} catch { /* ignore */ }
 						item.socket.end();
 					}
+				} finally {
+					try { item.onWorkerDone?.(); } catch { /* ignore */ }
 				}
 				activeItem = null;
 				activeSink = null;
 			}
 		} finally {
 			workerRunning = false;
+		}
+	}
+
+	async function speakOne(
+		item: QueueItem,
+		text: string,
+		language: "en" | "pl",
+		sampleRate: number,
+	) {
+		const sink = await createAudioSink(sampleRate);
+		activeSink = sink;
+		try {
+			await engine.speak({
+				text,
+				language,
+				overrides: { voice: item.req.voice, speed: item.req.speed },
+				onChunk: (samples) => sink.write(samples),
+				shouldStop: () => stopRequested || shuttingDown || (item.streaming?.killed() ?? false),
+			});
+			sink.end();
+			await sink.done;
+		} catch (err) {
+			sink.stop();
+			throw err;
+		} finally {
+			activeSink = null;
 		}
 	}
 
@@ -246,6 +350,55 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 			speed: item.req.speed ?? reqConfig.speed,
 		};
 
+		if (item.streaming) {
+			// Streaming path: drain channel through SentenceBuffer, synthesize
+			// each emitted sentence, then flush residue.
+			const channel = item.streaming;
+			const sb = new SentenceBuffer();
+			// Pick language eagerly (auto picks per-sentence below from the actual
+			// sentence text).
+			let chosenSampleRate: number | null = null;
+
+			const synthesize = async (rawSentence: string) => {
+				if (channel.killed() || stopRequested || shuttingDown) return;
+				const text = item.req.raw ? rawSentence : prepareForSpeech(rawSentence);
+				if (!text.trim()) return;
+				const language = merged.language === "auto" ? detectLanguage(text) : merged.language;
+				const sampleRate = engine.getSampleRate(language);
+				if (chosenSampleRate === null) chosenSampleRate = sampleRate;
+				await speakOne(item, text, language, sampleRate);
+			};
+
+			for await (const chunk of channel) {
+				if (stopRequested || shuttingDown || channel.killed()) break;
+				const sentences = sb.push(chunk);
+				for (const s of sentences) {
+					await synthesize(s);
+					if (stopRequested || shuttingDown || channel.killed()) break;
+				}
+			}
+
+			// Channel ended (or killed). On a clean end, drain the residue.
+			if (!channel.killed() && !stopRequested && !shuttingDown) {
+				const residue = sb.flush();
+				if (residue) {
+					await synthesize(residue);
+				}
+			}
+
+			if (item.resolved) return;
+			item.resolved = true;
+			const wasKilled = channel.killed() || stopRequested;
+			if (wasKilled) {
+				try { await writeMessage(item.socket, { kind: "stopped" }); } catch { /* ignore */ }
+			} else {
+				try { await writeMessage(item.socket, { kind: "done", ok: true }); } catch { /* ignore */ }
+			}
+			try { item.socket.end(); } catch { /* ignore */ }
+			return;
+		}
+
+		// One-shot path (FEAT-0001).
 		let text = item.req.text;
 		if (!item.req.raw) text = prepareForSpeech(text);
 		if (!text.trim()) {
@@ -259,23 +412,7 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 
 		const language = merged.language === "auto" ? detectLanguage(text) : merged.language;
 		const sampleRate = engine.getSampleRate(language);
-		const sink = await createAudioSink(sampleRate);
-		activeSink = sink;
-
-		try {
-			await engine.speak({
-				text,
-				language,
-				overrides: { voice: item.req.voice, speed: item.req.speed },
-				onChunk: (samples) => sink.write(samples),
-				shouldStop: () => stopRequested || shuttingDown,
-			});
-			sink.end();
-			await sink.done;
-		} catch (err) {
-			sink.stop();
-			throw err;
-		}
+		await speakOne(item, text, language, sampleRate);
 
 		if (item.resolved) return;
 		item.resolved = true;
@@ -290,11 +427,19 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 	function abortActive() {
 		stopRequested = true;
 		activeSink?.stop();
+		// If the active item is streaming, kill the channel so the worker
+		// exits its for-await loop promptly.
+		if (activeItem?.streaming) {
+			activeItem.streaming.kill();
+		}
 	}
 
 	function handleStop(stopperSocket: Socket) {
 		// Snapshot pending items, drain queue.
 		const pending = queue.splice(0, queue.length);
+		// Capture the current active item BEFORE abortActive (which may
+		// trigger the worker to clear it).
+		const currentlyActive = activeItem;
 		// Mark active as stopped (worker will write `stopped` when sink resolves).
 		abortActive();
 		// Notify each pending request that they were dropped.
@@ -304,6 +449,16 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 				writeMessage(p.socket, { kind: "stopped" }).catch(() => {});
 				p.socket.end();
 			}
+		}
+		// If active is a streaming connection, write `stopped` and destroy
+		// its socket so the writer side sees EPIPE on further chunks.
+		if (currentlyActive?.streaming && !currentlyActive.resolved) {
+			currentlyActive.resolved = true;
+			writeMessage(currentlyActive.socket, { kind: "stopped" })
+				.catch(() => {})
+				.finally(() => {
+					try { currentlyActive.socket.destroy(); } catch { /* ignore */ }
+				});
 		}
 		// Reply to the stopper.
 		writeMessage(stopperSocket, { kind: "stopped" })
@@ -329,6 +484,33 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 
 	async function handleConnection(socket: Socket) {
 		let firstMessageSeen = false;
+		let streamingItem: QueueItem | null = null;
+		let idleTimer: NodeJS.Timeout | null = null;
+		let maxTimer: NodeJS.Timeout | null = null;
+		let acceptingChunks = true;
+
+		const clearStreamingTimers = () => {
+			if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+			if (maxTimer) { clearTimeout(maxTimer); maxTimer = null; }
+		};
+		const resetIdleTimer = () => {
+			if (!streamingItem) return;
+			if (idleTimer) clearTimeout(idleTimer);
+			idleTimer = setTimeout(() => {
+				idleTimer = null;
+				acceptingChunks = false;
+				streamingItem?.streaming?.end();
+			}, streamIdleMs);
+		};
+		const startMaxTimer = () => {
+			if (!streamingItem) return;
+			maxTimer = setTimeout(() => {
+				maxTimer = null;
+				acceptingChunks = false;
+				streamingItem?.streaming?.end();
+			}, streamMaxMs);
+		};
+
 		try {
 			for await (const msg of readMessages(socket)) {
 				if (!firstMessageSeen) {
@@ -345,12 +527,56 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 				}
 
 				if (msg.kind === "speak") {
+					if (msg.streaming === true) {
+						const channel = createStreamingChannel();
+						const item: QueueItem = {
+							req: msg,
+							socket,
+							resolved: false,
+							streaming: channel,
+							onWorkerDone: clearStreamingTimers,
+						};
+						streamingItem = item;
+						// Seed with the initial speak frame's text if non-empty.
+						if (typeof msg.text === "string" && msg.text.length > 0) {
+							channel.push(msg.text);
+						}
+						queue.push(item);
+						await writeMessage(socket, { kind: "ack" });
+						kickWorker();
+						resetIdleTimer();
+						startMaxTimer();
+						// Continue reading this socket for chunk/end frames.
+						continue;
+					}
+					// One-shot (existing behavior).
 					const item: QueueItem = { req: msg, socket, resolved: false };
 					queue.push(item);
 					await writeMessage(socket, { kind: "ack" });
 					kickWorker();
 					// Don't read more from this socket; daemon writes done/error/stopped
 					// and closes.
+					return;
+				}
+
+				if (msg.kind === "chunk") {
+					if (!streamingItem || !acceptingChunks) {
+						// Silently drop chunks past the cap or with no streaming context.
+						continue;
+					}
+					if (typeof msg.text === "string" && msg.text.length > 0) {
+						streamingItem.streaming?.push(msg.text);
+					}
+					resetIdleTimer();
+					continue;
+				}
+
+				if (msg.kind === "end") {
+					if (streamingItem) {
+						clearStreamingTimers();
+						acceptingChunks = false;
+						streamingItem.streaming?.end();
+					}
 					return;
 				}
 
@@ -368,8 +594,19 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 				socket.end();
 				return;
 			}
+			// Reader loop exited (socket closed) — if we were streaming and
+			// hadn't seen `end`, treat as graceful end.
+			if (streamingItem) {
+				clearStreamingTimers();
+				acceptingChunks = false;
+				streamingItem.streaming?.end();
+			}
 		} catch {
 			// connection error — make sure we don't leak the socket
+			if (streamingItem) {
+				clearStreamingTimers();
+				streamingItem.streaming?.end();
+			}
 			try { socket.destroy(); } catch { /* ignore */ }
 		}
 	}

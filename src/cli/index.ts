@@ -20,7 +20,7 @@ import { playAudio, createStreamingPlayer } from "../core/audio-player.js";
 import { detectLanguage } from "../core/language-detect.js";
 import { prepareForSpeech, splitIntoChunks } from "../core/text-prep.js";
 import { runDaemon } from "../core/daemon-server.js";
-import { tryDaemonRoute } from "../core/daemon-client.js";
+import { tryDaemonRoute, tryDaemonStreaming } from "../core/daemon-client.js";
 import { daemonStart, daemonStop, daemonStatus } from "./daemon-cmd.js";
 
 function printUsage() {
@@ -162,6 +162,25 @@ async function main() {
 		});
 		console.log("All models ready.");
 		process.exit(0);
+	}
+
+	// Decide between streaming (stdin pipe, no positional arg) and one-shot.
+	const stdinIsPipe = !process.stdin.isTTY && !args.text;
+
+	if (stdinIsPipe) {
+		// Try the daemon streaming path first. If the daemon isn't reachable,
+		// fall back to the legacy buffer-stdin-then-synthesize path below.
+		const code = await tryDaemonStreaming(
+			{
+				text: null,
+				language: config.language,
+				voice: config.enVoice,
+				speed: config.speed,
+				raw: args.raw,
+			},
+			process.stdin,
+		);
+		if (code !== null) process.exit(code);
 	}
 
 	// Get text

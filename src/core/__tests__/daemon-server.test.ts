@@ -265,6 +265,233 @@ describe("daemon-server", () => {
 		expect(err.message).toContain("synthesis blew up");
 	});
 
+	it("AC-1: streaming connection starts playback before end-of-input", async () => {
+		const fh = makeFakeFactory({ playMs: 30 });
+		handle = await startDaemon({ ttsFactory: fh.factory });
+		const socketPath = join(tmpDir, "daemon.sock");
+
+		const s = await connect(socketPath);
+		const replies: any[] = [];
+		const consumer = (async () => {
+			for await (const m of readMessages(s)) replies.push(m);
+		})();
+
+		await writeMessage(s, {
+			kind: "speak",
+			version: PROTOCOL_VERSION,
+			text: "",
+			streaming: true,
+		});
+		// Wait for ack so the worker has had a chance to grab the item.
+		await new Promise((r) => setTimeout(r, 20));
+		expect(replies.some((m) => m.kind === "ack")).toBe(true);
+
+		// Send first sentence — boundary on the trailing space.
+		await writeMessage(s, { kind: "chunk", text: "Hello world. " });
+		// Send second sentence (no trailing whitespace, will need flush on end).
+		await writeMessage(s, { kind: "chunk", text: "Second sentence." });
+
+		// Give the worker a beat to synthesize the first sentence — playMs=30
+		// plus a bit for setTimeout on the fake sink end()
+		await new Promise((r) => setTimeout(r, 120));
+
+		// The first sentence should have been synthesized BEFORE we send `end`.
+		const e = fh.getEngine();
+		expect(e.calls.map((c) => c.text)).toContain("Hello world.");
+		expect(replies.some((m) => m.kind === "done")).toBe(false);
+
+		// Now send end — daemon flushes residue and signals done.
+		await writeMessage(s, { kind: "end" });
+		await consumer;
+
+		expect(e.calls.map((c) => c.text)).toEqual(["Hello world.", "Second sentence."]);
+		expect(replies.some((m) => m.kind === "done")).toBe(true);
+	});
+
+	it("AC-2: idle timeout drains buffer and signals done", async () => {
+		process.env.TELLME_STREAM_IDLE_MS = "50";
+		try {
+			const fh = makeFakeFactory({ playMs: 10 });
+			handle = await startDaemon({ ttsFactory: fh.factory });
+			const socketPath = join(tmpDir, "daemon.sock");
+
+			const s = await connect(socketPath);
+			const replies: any[] = [];
+			const consumer = (async () => {
+				for await (const m of readMessages(s)) replies.push(m);
+			})();
+
+			await writeMessage(s, {
+				kind: "speak",
+				version: PROTOCOL_VERSION,
+				text: "",
+				streaming: true,
+			});
+			await new Promise((r) => setTimeout(r, 10));
+			await writeMessage(s, { kind: "chunk", text: "Hello world. " });
+			await writeMessage(s, { kind: "chunk", text: "And second" });
+
+			// Wait for the idle timer to fire and the worker to drain.
+			await consumer;
+
+			const e = fh.getEngine();
+			expect(e.calls.map((c) => c.text)).toEqual(["Hello world.", "And second"]);
+			expect(replies.some((m) => m.kind === "done")).toBe(true);
+		} finally {
+			delete process.env.TELLME_STREAM_IDLE_MS;
+		}
+	});
+
+	it("AC-3: hard duration cap stops accepting chunks and closes", async () => {
+		process.env.TELLME_STREAM_MAX_MS = "100";
+		try {
+			const fh = makeFakeFactory({ playMs: 50 });
+			handle = await startDaemon({ ttsFactory: fh.factory });
+			const socketPath = join(tmpDir, "daemon.sock");
+
+			const s = await connect(socketPath);
+			const replies: any[] = [];
+			const consumer = (async () => {
+				for await (const m of readMessages(s)) replies.push(m);
+			})();
+
+			await writeMessage(s, {
+				kind: "speak",
+				version: PROTOCOL_VERSION,
+				text: "",
+				streaming: true,
+			});
+			await new Promise((r) => setTimeout(r, 10));
+			await writeMessage(s, { kind: "chunk", text: "First sentence. " });
+
+			// Wait past the cap.
+			await new Promise((r) => setTimeout(r, 150));
+			// Try to push a chunk after the cap — daemon should silently drop it.
+			try {
+				await writeMessage(s, { kind: "chunk", text: "Late chunk. " });
+			} catch { /* ignore — socket may be closing */ }
+
+			await consumer;
+
+			const e = fh.getEngine();
+			expect(e.calls.map((c) => c.text)).toContain("First sentence.");
+			expect(e.calls.map((c) => c.text)).not.toContain("Late chunk.");
+			expect(replies.some((m) => m.kind === "done")).toBe(true);
+			expect(replies.some((m) => m.kind === "error")).toBe(false);
+		} finally {
+			delete process.env.TELLME_STREAM_MAX_MS;
+		}
+	});
+
+	it("AC-4: stop while streaming closes the connection cleanly", async () => {
+		const fh = makeFakeFactory({ playMs: 100 });
+		handle = await startDaemon({ ttsFactory: fh.factory });
+		const socketPath = join(tmpDir, "daemon.sock");
+
+		// Open streaming connection and start playback.
+		const s = await connect(socketPath);
+		const replies: any[] = [];
+		const consumer = (async () => {
+			for await (const m of readMessages(s)) replies.push(m);
+		})();
+
+		await writeMessage(s, {
+			kind: "speak",
+			version: PROTOCOL_VERSION,
+			text: "",
+			streaming: true,
+		});
+		await writeMessage(s, { kind: "chunk", text: "Streaming text now. " });
+		// Wait for the engine to pick up the first sentence.
+		await new Promise((r) => setTimeout(r, 30));
+
+		// Send stop from a second connection.
+		const stopReplies = await sendAndCollect(socketPath, {
+			kind: "stop",
+			version: PROTOCOL_VERSION,
+		});
+		expect(stopReplies.some((m) => m.kind === "stopped")).toBe(true);
+
+		await consumer;
+		expect(replies.some((m) => m.kind === "stopped")).toBe(true);
+		expect(replies.some((m) => m.kind === "done")).toBe(false);
+
+		// Verify daemon is not wedged: a fresh speak completes successfully.
+		const fresh = await sendAndCollect(socketPath, {
+			kind: "speak",
+			version: PROTOCOL_VERSION,
+			text: "fresh",
+		});
+		expect(fresh.some((m) => m.kind === "done")).toBe(true);
+	});
+
+	const ac5Cases = [
+		{ name: "graceful end", completion: "end" as const },
+		{ name: "idle timeout", completion: "idle" as const },
+		{ name: "client disconnect", completion: "disconnect" as const },
+	];
+	for (const c of ac5Cases) {
+		it(`AC-5: a second request waits for the streaming connection (${c.name})`, async () => {
+			if (c.completion === "idle") process.env.TELLME_STREAM_IDLE_MS = "50";
+			try {
+				const fh = makeFakeFactory({ playMs: 30 });
+				handle = await startDaemon({ ttsFactory: fh.factory });
+				const socketPath = join(tmpDir, "daemon.sock");
+
+				// Open streaming connection.
+				const stream = await connect(socketPath);
+				const streamReplies: any[] = [];
+				const streamConsumer = (async () => {
+					for await (const m of readMessages(stream)) streamReplies.push(m);
+				})();
+				await writeMessage(stream, {
+					kind: "speak",
+					version: PROTOCOL_VERSION,
+					text: "",
+					streaming: true,
+				});
+				await writeMessage(stream, { kind: "chunk", text: "First. " });
+				await writeMessage(stream, { kind: "chunk", text: "Second. " });
+				// Give the streamer a head start so the worker is busy when the
+				// second request arrives.
+				await new Promise((r) => setTimeout(r, 10));
+
+				// Open a second one-shot speak. It should queue and wait.
+				const secondPromise = sendAndCollect(socketPath, {
+					kind: "speak",
+					version: PROTOCOL_VERSION,
+					text: "second-request",
+				});
+
+				// Drive completion of the streaming connection per the test variant.
+				if (c.completion === "end") {
+					await new Promise((r) => setTimeout(r, 10));
+					await writeMessage(stream, { kind: "end" });
+				} else if (c.completion === "idle") {
+					// Just wait — the idle timer fires.
+				} else if (c.completion === "disconnect") {
+					await new Promise((r) => setTimeout(r, 10));
+					stream.destroy();
+				}
+
+				const second = await secondPromise;
+				await streamConsumer.catch(() => {});
+
+				expect(second.some((m: any) => m.kind === "done")).toBe(true);
+
+				const e = fh.getEngine();
+				const secondCall = e.calls.find((x) => x.text === "second-request");
+				expect(secondCall).toBeDefined();
+				const streamCalls = e.calls.filter((x) => x.text !== "second-request");
+				expect(streamCalls.length).toBeGreaterThan(0);
+				const lastStreamFinish = Math.max(...streamCalls.map((x) => x.finishedAt));
+				expect(secondCall!.startedAt).toBeGreaterThanOrEqual(lastStreamFinish);
+			} finally {
+				delete process.env.TELLME_STREAM_IDLE_MS;
+			}
+		});
+	}
+
 	it("AC-10: client receives done before EOF", async () => {
 		const fh = makeFakeFactory({ playMs: 5 });
 		handle = await startDaemon({ ttsFactory: fh.factory });

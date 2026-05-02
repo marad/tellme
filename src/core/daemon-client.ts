@@ -21,6 +21,12 @@ export interface CliArgs {
 	raw: boolean;
 }
 
+/** Treat this error code as "daemon closed our write side" — exit 130. */
+function isClosedWriteError(err: any): boolean {
+	const code = err?.code;
+	return code === "EPIPE" || code === "ECONNRESET" || code === "ERR_STREAM_DESTROYED" || code === "ERR_STREAM_WRITE_AFTER_END";
+}
+
 /**
  * Try to route a speak request through the daemon.
  *
@@ -130,6 +136,126 @@ export async function connectAndSend(req: ClientMessage): Promise<{ messages: Se
 		// fall through with what we have
 	}
 	return { messages, ok: true };
+}
+
+/**
+ * Streaming variant of {@link tryDaemonRoute}. Opens the daemon connection,
+ * sends a `speak` with `streaming: true`, then forwards stdin chunks as
+ * `chunk` frames as they arrive, sending `end` on stdin EOF.
+ *
+ * Returns the same exit-code shape as `tryDaemonRoute` (null = not reachable,
+ * 0 done, 1 error, 130 stopped/closed).
+ */
+export async function tryDaemonStreaming(args: CliArgs, stdin: NodeJS.ReadableStream): Promise<number | null> {
+	const path = getSocketPath();
+	if (!existsSync(path)) return null;
+
+	let socket: Socket;
+	try {
+		socket = await connect(path);
+	} catch (err: any) {
+		if (err?.code === "ECONNREFUSED") {
+			try { unlinkSync(path); } catch { /* ignore */ }
+			return null;
+		}
+		if (err?.code === "ENOENT") return null;
+		return null;
+	}
+
+	const speak = {
+		kind: "speak" as const,
+		version: PROTOCOL_VERSION,
+		text: "",
+		lang: args.language,
+		voice: args.voice,
+		speed: args.speed,
+		raw: args.raw,
+		streaming: true,
+	};
+
+	try {
+		await writeMessage(socket, speak);
+	} catch (err: any) {
+		if (isClosedWriteError(err)) return 130;
+		console.error("Error: failed to send to daemon:", (err as Error).message);
+		try { socket.destroy(); } catch { /* ignore */ }
+		return 1;
+	}
+
+	// Track whether the socket has been closed by the daemon — once it is,
+	// further writes from the stdin forwarder must be silently absorbed.
+	let socketClosed = false;
+	socket.on("close", () => { socketClosed = true; });
+	// Swallow EPIPE-like errors so they don't bubble as unhandled.
+	socket.on("error", () => { /* handled via write callbacks */ });
+
+	// Forward stdin chunks → `chunk` frames.
+	const forwarder = (async () => {
+		try {
+			for await (const chunk of stdin as AsyncIterable<Buffer | string>) {
+				if (socketClosed) break;
+				const text = typeof chunk === "string" ? chunk : chunk.toString("utf-8");
+				if (text.length === 0) continue;
+				try {
+					await writeMessage(socket, { kind: "chunk", text });
+				} catch (err: any) {
+					if (isClosedWriteError(err)) {
+						socketClosed = true;
+						break;
+					}
+					throw err;
+				}
+			}
+			if (!socketClosed) {
+				try {
+					await writeMessage(socket, { kind: "end" });
+				} catch (err: any) {
+					if (!isClosedWriteError(err)) throw err;
+				}
+			}
+		} catch (err: any) {
+			if (!isClosedWriteError(err)) {
+				// Non-EPIPE failure — surface and trigger error path.
+				console.error("Error: stdin forwarding failed:", (err as Error).message);
+			}
+		}
+	})();
+
+	let resolved: number | null = null;
+	try {
+		for await (const msg of readMessages(socket)) {
+			if (msg.kind === "version-mismatch") {
+				console.error(
+					`Error: tellme daemon protocol mismatch (CLI v${msg.expected}, daemon v${msg.got}). ` +
+					`Restart the daemon: tellme daemon stop && tellme daemon start.`,
+				);
+				resolved = 1;
+				break;
+			}
+			else if (msg.kind === "ack") continue;
+			else if (msg.kind === "done") { resolved = 0; break; }
+			else if (msg.kind === "error") {
+				console.error("Error:", msg.message);
+				resolved = 1;
+				break;
+			}
+			else if (msg.kind === "stopped") { resolved = 130; break; }
+		}
+	} catch (err: any) {
+		if (isClosedWriteError(err)) return 130;
+		console.error("Error: daemon connection failed:", (err as Error).message);
+		return 1;
+	}
+
+	socketClosed = true;
+	try { socket.destroy(); } catch { /* ignore */ }
+	await forwarder;
+
+	if (resolved === null) {
+		// Daemon closed without explicit completion — treat as 130.
+		return 130;
+	}
+	return resolved;
 }
 
 function connect(path: string): Promise<Socket> {

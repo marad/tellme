@@ -21,6 +21,12 @@ export interface SpeakRequest {
 	voice?: string;
 	speed?: number;
 	raw?: boolean;
+	/**
+	 * Streaming mode (FEAT-0002). When true, the daemon keeps reading the
+	 * same connection for follow-up `chunk` and `end` frames instead of
+	 * returning after the speak frame is queued.
+	 */
+	streaming?: boolean;
 }
 
 export interface StopRequest {
@@ -33,7 +39,23 @@ export interface StatusRequest {
 	version: number;
 }
 
-export type ClientMessage = SpeakRequest | StopRequest | StatusRequest;
+/** Streaming continuation: appends text to the in-flight streaming request. */
+export interface ChunkMessage {
+	kind: "chunk";
+	text: string;
+}
+
+/** Streaming continuation: graceful end-of-input. */
+export interface EndMessage {
+	kind: "end";
+}
+
+export type ClientMessage =
+	| SpeakRequest
+	| StopRequest
+	| StatusRequest
+	| ChunkMessage
+	| EndMessage;
 
 // ── Server → client ──
 
