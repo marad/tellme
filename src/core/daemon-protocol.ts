@@ -108,7 +108,7 @@ export async function* readMessages(stream: Readable): AsyncGenerator<any, void,
 	let error: Error | null = null;
 
 	const onData = (chunk: Buffer) => {
-		buf = buf.length === 0 ? chunk : Buffer.concat([buf, chunk]);
+		buf = (buf.length === 0 ? chunk : Buffer.concat([buf, chunk])) as Buffer<ArrayBuffer>;
 		while (buf.length >= 4) {
 			const len = buf.readUInt32BE(0);
 			if (buf.length < 4 + len) break;

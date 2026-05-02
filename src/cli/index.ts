@@ -13,7 +13,7 @@
  *   tellme --list-voices              # list available voices
  */
 
-import { DEFAULT_CONFIG, KOKORO_VOICES, resolveVoiceId, loadConfig, type TellMeConfig } from "../core/config.js";
+import { KOKORO_VOICES, loadConfig, type TellMeConfig } from "../core/config.js";
 import { ensureAllModels, isKokoroReady, isPiperPlReady, type DownloadProgress } from "../core/model-manager.js";
 import { TellMeTts } from "../core/tts-engine.js";
 import { playAudio, createStreamingPlayer } from "../core/audio-player.js";

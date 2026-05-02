@@ -120,7 +120,7 @@ async function createAudioSink(sampleRate: number): Promise<AudioSink> {
 		resolveDone = resolve;
 		rejectDone = reject;
 	});
-	let handle: { stop(): void } | null = null;
+	let handle: { stop(): void; done: Promise<void> } | null = null;
 	let stopped = false;
 	return {
 		write(samples) { if (!stopped) buffers.push(samples); },
