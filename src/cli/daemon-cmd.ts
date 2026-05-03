@@ -28,6 +28,49 @@ async function statusPing(): Promise<{ running: boolean; socketPath?: string; qu
 	return { running: false };
 }
 
+export interface EnsureDaemonOptions {
+	/** Override the spawn step (used by tests). Default: detached spawn of the bin entrypoint. */
+	spawner?: () => void;
+	/** Maximum time to wait for the daemon to become reachable. Default: 5000ms. */
+	waitMs?: number;
+}
+
+/**
+ * Ensure a daemon is reachable. If one already answers `status`, return true
+ * immediately. Otherwise spawn a fresh daemon (via `opts.spawner` or the
+ * default detached-process pattern) and poll for readiness. Returns `false`
+ * on timeout or — in the default-spawner path — early exit. This helper is
+ * silent: logging is the caller's responsibility.
+ */
+export async function ensureDaemonRunning(opts: EnsureDaemonOptions = {}): Promise<boolean> {
+	const probe = await statusPing();
+	if (probe.running) return true;
+
+	const waitMs = opts.waitMs ?? 5000;
+
+	let earlyExit = false;
+	if (opts.spawner) {
+		opts.spawner();
+	} else {
+		const bin = findBinPath();
+		const proc = spawn(process.execPath, [bin, "__daemon-main__"], {
+			detached: true,
+			stdio: "ignore",
+		});
+		proc.unref();
+		proc.once("exit", () => { earlyExit = true; });
+	}
+
+	const deadline = Date.now() + waitMs;
+	while (Date.now() < deadline) {
+		if (earlyExit) return false;
+		await new Promise((r) => setTimeout(r, 100));
+		const s = await statusPing();
+		if (s.running) return true;
+	}
+	return false;
+}
+
 export async function daemonStart(): Promise<number> {
 	const probe = await statusPing();
 	if (probe.running) {
@@ -35,30 +78,11 @@ export async function daemonStart(): Promise<number> {
 		console.log(`  socket: ${probe.socketPath}`);
 		return 0;
 	}
-
-	const bin = findBinPath();
-	const proc = spawn(process.execPath, [bin, "__daemon-main__"], {
-		detached: true,
-		stdio: "ignore",
-	});
-	proc.unref();
-
-	let earlyExit: { code: number | null; signal: NodeJS.Signals | null } | null = null;
-	proc.once("exit", (code, signal) => { earlyExit = { code, signal }; });
-
-	// Poll for readiness up to ~5 seconds.
-	const deadline = Date.now() + 5000;
-	while (Date.now() < deadline) {
-		if (earlyExit) {
-			console.error(`Error: daemon exited early (code=${earlyExit.code}, signal=${earlyExit.signal})`);
-			return 1;
-		}
-		await new Promise((r) => setTimeout(r, 100));
+	const ok = await ensureDaemonRunning();
+	if (ok) {
 		const s = await statusPing();
-		if (s.running) {
-			console.log(`daemon started (socket: ${s.socketPath})`);
-			return 0;
-		}
+		console.log(`daemon started (socket: ${s.socketPath})`);
+		return 0;
 	}
 	console.error("Error: daemon did not start within 5s");
 	return 1;

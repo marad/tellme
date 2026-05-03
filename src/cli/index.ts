@@ -21,8 +21,10 @@ import { detectLanguage } from "../core/language-detect.js";
 import { prepareForSpeech, splitIntoChunks } from "../core/text-prep.js";
 import { runDaemon } from "../core/daemon-server.js";
 import { tryDaemonRoute, tryDaemonStreaming } from "../core/daemon-client.js";
-import { daemonStart, daemonStop, daemonStatus } from "./daemon-cmd.js";
+import { daemonStart, daemonStop, daemonStatus, ensureDaemonRunning } from "./daemon-cmd.js";
 import { shouldUseDaemon } from "./daemon-routing.js";
+import { existsSync } from "node:fs";
+import { getSocketPath } from "../core/daemon-paths.js";
 
 function printUsage() {
 	console.log(`
@@ -169,6 +171,9 @@ async function main() {
 	const stdinIsPipe = !process.stdin.isTTY && !args.text;
 
 	if (stdinIsPipe && shouldUseDaemon()) {
+		if (!existsSync(getSocketPath())) {
+			await ensureDaemonRunning();
+		}
 		// Try the daemon streaming path first. If the daemon isn't reachable,
 		// fall back to the legacy buffer-stdin-then-synthesize path below.
 		const code = await tryDaemonStreaming(
@@ -194,6 +199,9 @@ async function main() {
 	// If a daemon is running, route through it. The daemon handles text
 	// preparation and synthesis itself; we return without ever loading models.
 	if (shouldUseDaemon()) {
+		if (!existsSync(getSocketPath())) {
+			await ensureDaemonRunning();
+		}
 		const code = await tryDaemonRoute(
 			{
 				text,
