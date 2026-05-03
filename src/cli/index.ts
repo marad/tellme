@@ -4,13 +4,23 @@
  * tellme CLI — read text aloud using local TTS models.
  *
  * Usage:
- *   tellme "Hello world"              # speak text
- *   echo "Hello" | tellme             # pipe text
- *   tellme --download                 # download models
- *   tellme --lang pl "Dzień dobry"    # force Polish
- *   tellme --voice af_bella "Hi"      # select Kokoro voice
- *   tellme --speed 1.2 "Fast speech"  # adjust speed
- *   tellme --list-voices              # list available voices
+ *   tellme [options] [text]           # speak text
+ *   echo "text" | tellme [options]    # pipe text
+ *   tellme daemon <start|stop|status> # manage background daemon
+ *
+ * Options:
+ *   --download              Download TTS models (Kokoro EN + Piper PL)
+ *   --lang <en|pl|auto>     Force language (default: auto)
+ *   --voice <name>          Kokoro EN voice (default: from config)
+ *   --speed <0.5-2.0>       Speech speed (default: from config)
+ *   --pl-voice <name>       Polish voice (default: from config)
+ *   --list-voices           List available Kokoro voices
+ *   --status                Show model download status
+ *   --raw                   Skip text preparation (read as-is)
+ *   -h, --help              Show this help
+ *
+ * Environment:
+ *   TELLME_NO_DAEMON=1      Disable daemon routing, run TTS inline
  */
 
 import { KOKORO_VOICES, loadConfig, type TellMeConfig } from "../core/config.js";
@@ -35,15 +45,23 @@ Usage:
   echo "text" | tellme [options]
 
 Options:
-  --download          Download TTS models (Kokoro EN + Piper PL)
-  --lang <en|pl|auto> Force language (default: auto)
-  --voice <name>      Kokoro EN voice (default: from config)
-  --speed <0.5-2.0>   Speech speed (default: from config)
-  --pl-voice <name>  Polish voice: meski_wg_glos-medium, justyna_wg_glos-medium
-  --list-voices       List available Kokoro voices
-  --status            Show model download status
-  --raw               Skip text preparation (read as-is)
-  -h, --help          Show this help
+  --download              Download TTS models (Kokoro EN + Piper PL)
+  --lang <en|pl|auto>     Force language (default: auto)
+  --voice <name>          Kokoro EN voice (default: from config)
+  --speed <0.5-2.0>       Speech speed (default: from config)
+  --pl-voice <name>       Polish voice (default: from config)
+  --list-voices           List available Kokoro voices
+  --status                Show model download status
+  --raw                   Skip text preparation (read as-is)
+  -h, --help              Show this help
+
+Daemon commands:
+  tellme daemon start     Start the background TTS daemon
+  tellme daemon stop      Stop the background TTS daemon
+  tellme daemon status    Show daemon status (running, socket, queue)
+
+Environment:
+  TELLME_NO_DAEMON=1      Disable daemon routing, run TTS inline
 `);
 }
 
