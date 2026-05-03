@@ -540,6 +540,67 @@ describe("daemon-server", () => {
 		expect(__getSinkCountForTest()).toBe(1);
 	});
 
+	it("AC-7: auto-mode detects language once on the first sentence and reuses it", async () => {
+		const fh = makeFakeFactory({ playMs: 5 });
+		handle = await startDaemon({ ttsFactory: fh.factory });
+		const socketPath = join(tmpDir, "daemon.sock");
+
+		const s = await connect(socketPath);
+		const replies: any[] = [];
+		const consumer = (async () => {
+			for await (const m of readMessages(s)) replies.push(m);
+		})();
+
+		await writeMessage(s, {
+			kind: "speak",
+			version: PROTOCOL_VERSION,
+			text: "",
+			lang: "auto",
+			streaming: true,
+		});
+		await writeMessage(s, { kind: "chunk", text: "Hello world. " });
+		await writeMessage(s, { kind: "chunk", text: "Cześć świecie." });
+		await writeMessage(s, { kind: "end" });
+		await consumer;
+
+		const e = fh.getEngine();
+		expect(e.calls.length).toBe(2);
+		// First sentence is English → cached. Second sentence has Polish
+		// characters that would auto-detect as "pl" if re-evaluated, but the
+		// connection's cached "en" must be reused.
+		expect(e.calls[0].language).toBe("en");
+		expect(e.calls[1].language).toBe("en");
+	});
+
+	it("AC-7: explicit lang override applies to every sentence", async () => {
+		const fh = makeFakeFactory({ playMs: 5 });
+		handle = await startDaemon({ ttsFactory: fh.factory });
+		const socketPath = join(tmpDir, "daemon.sock");
+
+		const s = await connect(socketPath);
+		const replies: any[] = [];
+		const consumer = (async () => {
+			for await (const m of readMessages(s)) replies.push(m);
+		})();
+
+		await writeMessage(s, {
+			kind: "speak",
+			version: PROTOCOL_VERSION,
+			text: "",
+			lang: "pl",
+			streaming: true,
+		});
+		await writeMessage(s, { kind: "chunk", text: "Hello world. " });
+		await writeMessage(s, { kind: "chunk", text: "Another English sentence." });
+		await writeMessage(s, { kind: "end" });
+		await consumer;
+
+		const e = fh.getEngine();
+		expect(e.calls.length).toBe(2);
+		expect(e.calls[0].language).toBe("pl");
+		expect(e.calls[1].language).toBe("pl");
+	});
+
 	it("AC-10: client receives done before EOF", async () => {
 		const fh = makeFakeFactory({ playMs: 5 });
 		handle = await startDaemon({ ttsFactory: fh.factory });

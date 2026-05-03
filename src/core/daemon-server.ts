@@ -399,6 +399,10 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 
 			let currentSink: AudioSink | null = null;
 			let currentRate: number | null = null;
+			// AC-7: pick language once per streaming connection. For "auto" it's
+			// detected from the first sentence and reused for the rest; for an
+			// explicit "en"/"pl" header it's just that value.
+			let connectionLanguage: "en" | "pl" | null = null;
 
 			const closeCurrentSink = async () => {
 				if (!currentSink) return;
@@ -419,7 +423,12 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 				if (channel.killed() || stopRequested || shuttingDown) return;
 				const text = item.req.raw ? rawSentence : prepareForSpeech(rawSentence);
 				if (!text.trim()) return;
-				const language = merged.language === "auto" ? detectLanguage(text) : merged.language;
+				if (connectionLanguage === null) {
+					connectionLanguage = merged.language === "auto"
+						? detectLanguage(text)
+						: merged.language;
+				}
+				const language = connectionLanguage;
 				const sampleRate = engine.getSampleRate(language);
 
 				// Open or reopen sink if needed.
