@@ -22,9 +22,12 @@ Three failure modes need explicit behavior. If the writer goes silent for too lo
 - AC-3 — A single request connection has a configured maximum total duration. If exceeded, the daemon stops accepting more chunks, finishes the current sentence, signals completion, and closes.
 - AC-4 — When the user requests stop while a streaming connection is active, the daemon closes that connection from its side. The CLI handles the closed write cleanly and exits without a stack trace.
 - AC-5 — When a request arrives while another connection is open and not yet completed, the new request waits in the queue and begins playing only after the prior connection has signaled completion (whether by graceful end-of-input, client disconnect, idle timeout, or hard duration cap).
+- AC-6 — Within a single streaming connection, sentences play as one continuous audio stream with no audible gap or click between consecutive sentences.
+- AC-7 — All sentences within a single streaming connection are spoken in the same language. If the request header sets `lang` explicitly, every sentence uses that language. If `lang` is `auto` or absent, the daemon selects one language for the connection from the first sentence and reuses it for all subsequent sentences.
 
 ## Out of scope
 
 - Per-request mid-utterance abort. Stop is still global, as in FEAT-0001.
 - Backpressure when the queue grows large. A streaming connection that produces text faster than the daemon can play it will buffer; explicit caps are not in this spec.
 - Concurrent streaming connections playing simultaneously. The single-output-stream invariant from FEAT-0001 still holds.
+- Mid-connection language changes. The connection's language is fixed at the start (either by explicit header or by detection on the first sentence); a streaming connection cannot be mid-stream switched between languages.
