@@ -22,6 +22,7 @@ import { prepareForSpeech, splitIntoChunks } from "../core/text-prep.js";
 import { runDaemon } from "../core/daemon-server.js";
 import { tryDaemonRoute, tryDaemonStreaming } from "../core/daemon-client.js";
 import { daemonStart, daemonStop, daemonStatus } from "./daemon-cmd.js";
+import { shouldUseDaemon } from "./daemon-routing.js";
 
 function printUsage() {
 	console.log(`
@@ -167,7 +168,7 @@ async function main() {
 	// Decide between streaming (stdin pipe, no positional arg) and one-shot.
 	const stdinIsPipe = !process.stdin.isTTY && !args.text;
 
-	if (stdinIsPipe) {
+	if (stdinIsPipe && shouldUseDaemon()) {
 		// Try the daemon streaming path first. If the daemon isn't reachable,
 		// fall back to the legacy buffer-stdin-then-synthesize path below.
 		const code = await tryDaemonStreaming(
@@ -192,7 +193,7 @@ async function main() {
 
 	// If a daemon is running, route through it. The daemon handles text
 	// preparation and synthesis itself; we return without ever loading models.
-	{
+	if (shouldUseDaemon()) {
 		const code = await tryDaemonRoute(
 			{
 				text,
