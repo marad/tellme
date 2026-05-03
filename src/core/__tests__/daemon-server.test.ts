@@ -500,7 +500,7 @@ describe("daemon-server", () => {
 		});
 	}
 
-	it("streaming connection reuses a single AudioSink across sentences (same sample rate)", async () => {
+	it("AC-6: streaming connection reuses a single AudioSink across sentences (same sample rate)", async () => {
 		__resetSinkCountForTest();
 		const fh = makeFakeFactory({ playMs: 10 });
 		handle = await startDaemon({ ttsFactory: fh.factory });
