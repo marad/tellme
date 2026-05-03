@@ -272,6 +272,11 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 		const n = raw ? parseInt(raw, 10) : NaN;
 		return Number.isFinite(n) && n > 0 ? n : 300000;
 	})();
+	const daemonIdleMs = (() => {
+		const raw = process.env.TELLME_DAEMON_IDLE_MS;
+		const n = raw ? parseInt(raw, 10) : NaN;
+		return Number.isFinite(n) && n > 0 ? n : 600000;
+	})();
 
 	ensureDaemonDir();
 	const socketPath = getSocketPath();
@@ -291,7 +296,29 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 	let exitResolve: (() => void) | null = null;
 
 	let workerRunning = false;
+	let inflightConnections = 0;
+	let idleExitTimer: NodeJS.Timeout | null = null;
+
+	const armIdleTimer = () => {
+		if (idleExitTimer) return;
+		if (shuttingDown) return;
+		if (queue.length !== 0) return;
+		if (activeItem !== null) return;
+		if (inflightConnections > 0) return;
+		idleExitTimer = setTimeout(() => {
+			idleExitTimer = null;
+			void stop();
+		}, daemonIdleMs);
+	};
+	const disarmIdleTimer = () => {
+		if (idleExitTimer) {
+			clearTimeout(idleExitTimer);
+			idleExitTimer = null;
+		}
+	};
+
 	const kickWorker = () => {
+		disarmIdleTimer();
 		if (workerRunning) return;
 		workerRunning = true;
 		queueMicrotask(() => { void worker(); });
@@ -321,6 +348,7 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 			}
 		} finally {
 			workerRunning = false;
+			armIdleTimer();
 		}
 	}
 
@@ -556,6 +584,8 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 	});
 
 	async function handleConnection(socket: Socket) {
+		inflightConnections++;
+		disarmIdleTimer();
 		let firstMessageSeen = false;
 		let streamingItem: QueueItem | null = null;
 		let idleTimer: NodeJS.Timeout | null = null;
@@ -584,6 +614,7 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 			}, streamMaxMs);
 		};
 
+		try {
 		try {
 			for await (const msg of readMessages(socket)) {
 				if (!firstMessageSeen) {
@@ -695,6 +726,10 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 			}
 			try { socket.destroy(); } catch { /* ignore */ }
 		}
+		} finally {
+			inflightConnections--;
+			armIdleTimer();
+		}
 	}
 
 	await new Promise<void>((resolve, reject) => {
@@ -706,6 +741,7 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 			resolve();
 		});
 	});
+	armIdleTimer();
 
 	const stop = async () => {
 		if (shuttingDown) return;

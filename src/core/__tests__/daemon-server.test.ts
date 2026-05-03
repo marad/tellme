@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createConnection, type Socket } from "node:net";
@@ -12,6 +12,7 @@ import {
 	__getSinkCountForTest,
 } from "../daemon-server.js";
 import { writeMessage, readMessages, PROTOCOL_VERSION } from "../daemon-protocol.js";
+import { getSocketPath, getPidPath } from "../daemon-paths.js";
 
 interface SpeakCall {
 	text: string;
@@ -565,5 +566,50 @@ describe("daemon-server", () => {
 
 		expect(sawDone).toBe(true);
 		expect(eofAfterDone).toBe(true);
+	});
+
+	it("FEAT-0003 AC-2: daemon exits cleanly after idle interval", async () => {
+		process.env.TELLME_DAEMON_IDLE_MS = "50";
+		try {
+			const fh = makeFakeFactory();
+			handle = await startDaemon({ ttsFactory: fh.factory });
+			const socketPath = getSocketPath();
+			const pidPath = getPidPath();
+
+			// Wait long enough for the idle timer to fire and stop() to clean up.
+			await new Promise((r) => setTimeout(r, 150));
+
+			expect(existsSync(socketPath)).toBe(false);
+			expect(existsSync(pidPath)).toBe(false);
+		} finally {
+			delete process.env.TELLME_DAEMON_IDLE_MS;
+		}
+	});
+
+	it("FEAT-0003 AC-2: activity resets the idle timer", async () => {
+		process.env.TELLME_DAEMON_IDLE_MS = "50";
+		try {
+			const fh = makeFakeFactory();
+			handle = await startDaemon({ ttsFactory: fh.factory });
+			const socketPath = getSocketPath();
+
+			// Ping every 30ms for ~200ms — each connection should disarm and
+			// re-arm the idle timer, keeping the daemon alive.
+			const start = Date.now();
+			while (Date.now() - start < 200) {
+				await sendAndCollect(socketPath, {
+					kind: "status",
+					version: PROTOCOL_VERSION,
+				});
+				await new Promise((r) => setTimeout(r, 30));
+			}
+			expect(existsSync(socketPath)).toBe(true);
+
+			// Stop pinging; let the idle timer fire.
+			await new Promise((r) => setTimeout(r, 150));
+			expect(existsSync(socketPath)).toBe(false);
+		} finally {
+			delete process.env.TELLME_DAEMON_IDLE_MS;
+		}
 	});
 });
