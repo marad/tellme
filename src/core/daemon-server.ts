@@ -338,15 +338,17 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 				language,
 				overrides: { voice: item.req.voice, speed: item.req.speed },
 				onChunk: (samples) => sink.write(samples),
-				shouldStop: () => stopRequested || shuttingDown || (item.streaming?.killed() ?? false),
+				shouldStop: () => stopRequested || shuttingDown,
 			});
+			// Keep `activeSink` live across the drain so a concurrent stop
+			// can still abort playback instead of finishing the tail.
 			sink.end();
 			await sink.done;
 		} catch (err) {
 			sink.stop();
 			throw err;
 		} finally {
-			activeSink = null;
+			if (activeSink === sink) activeSink = null;
 		}
 	}
 
@@ -373,11 +375,16 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 			const closeCurrentSink = async () => {
 				if (!currentSink) return;
 				const sink = currentSink;
-				currentSink = null;
-				currentRate = null;
-				if (activeSink === sink) activeSink = null;
+				// Keep `activeSink` pointing at this sink across the drain so a
+				// concurrent `handleStop` can still call `sink.stop()` and
+				// actually cut the audio. Null out only after `done` resolves.
 				sink.end();
 				await sink.done;
+				if (currentSink === sink) {
+					currentSink = null;
+					currentRate = null;
+				}
+				if (activeSink === sink) activeSink = null;
 			};
 
 			const synthesize = async (rawSentence: string) => {
@@ -398,12 +405,16 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 				const sink = currentSink;
 
 				try {
+					// `channel.killed()` isn't checked here — `handleStop` always
+					// sets `stopRequested` alongside `kill()`, and the for-await
+					// loop above is the load-bearing gate that stops dispatching
+					// further sentences when the channel is killed.
 					await engine.speak({
 						text,
 						language,
 						overrides: { voice: item.req.voice, speed: item.req.speed },
 						onChunk: (samples) => sink.write(samples),
-						shouldStop: () => stopRequested || shuttingDown || channel.killed(),
+						shouldStop: () => stopRequested || shuttingDown,
 					});
 				} catch (err) {
 					// Stop the live sink and propagate.
@@ -589,6 +600,19 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 				}
 
 				if (msg.kind === "speak") {
+					if (streamingItem) {
+						// A streaming session is already in flight on this socket.
+						// Reject rather than overwrite — overwriting would leak
+						// the prior idle/max timers and orphan the queued item.
+						try {
+							await writeMessage(socket, {
+								kind: "error",
+								message: "streaming session already active on this connection",
+							});
+						} catch { /* ignore */ }
+						socket.end();
+						return;
+					}
 					if (msg.streaming === true) {
 						const channel = createStreamingChannel();
 						const item: QueueItem = {
