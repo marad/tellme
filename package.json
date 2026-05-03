@@ -27,6 +27,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "jiti": "^2.6.1",
     "sherpa-onnx-node": "^1.12.38"
   },
   "peerDependencies": {
