@@ -1,0 +1,11 @@
+{
+  "name": "tellme-claude",
+  "version": "0.1.0",
+  "description": "Read Claude's responses aloud with local TTS via the tellme daemon. Auto-reads on Stop and PreToolUse so narration before tool calls is spoken too.",
+  "author": {
+    "name": "Marcin Radoszewski"
+  },
+  "homepage": "https://github.com/marad/tellme",
+  "license": "MIT",
+  "keywords": ["tts", "text-to-speech", "tellme", "accessibility", "audio"]
+}

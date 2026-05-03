@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "tellme-local",
+  "description": "Local development marketplace for the tellme Claude Code plugin",
+  "owner": {
+    "name": "Marcin Radoszewski"
+  },
+  "plugins": [
+    {
+      "name": "tellme-claude",
+      "description": "Read Claude's responses aloud with local TTS via the tellme daemon. Auto-reads on Stop and PreToolUse so narration before tool calls is spoken too.",
+      "category": "productivity",
+      "source": "./tellme-claude-plugin",
+      "homepage": "https://github.com/marad/tellme"
+    }
+  ]
+}
