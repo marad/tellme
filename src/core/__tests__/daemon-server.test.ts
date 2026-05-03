@@ -3,7 +3,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createConnection, type Socket } from "node:net";
-import { startDaemon, type DaemonHandle, type TtsFactory, type DaemonTtsEngine } from "../daemon-server.js";
+import {
+	startDaemon,
+	type DaemonHandle,
+	type TtsFactory,
+	type DaemonTtsEngine,
+	__resetSinkCountForTest,
+	__getSinkCountForTest,
+} from "../daemon-server.js";
 import { writeMessage, readMessages, PROTOCOL_VERSION } from "../daemon-protocol.js";
 
 interface SpeakCall {
@@ -491,6 +498,46 @@ describe("daemon-server", () => {
 			}
 		});
 	}
+
+	it("streaming connection reuses a single AudioSink across sentences (same sample rate)", async () => {
+		__resetSinkCountForTest();
+		const fh = makeFakeFactory({ playMs: 10 });
+		handle = await startDaemon({ ttsFactory: fh.factory });
+		const socketPath = join(tmpDir, "daemon.sock");
+
+		const s = await connect(socketPath);
+		const replies: any[] = [];
+		const consumer = (async () => {
+			for await (const m of readMessages(s)) replies.push(m);
+		})();
+
+		await writeMessage(s, {
+			kind: "speak",
+			version: PROTOCOL_VERSION,
+			text: "",
+			streaming: true,
+		});
+		await writeMessage(s, { kind: "chunk", text: "First sentence. " });
+		await writeMessage(s, { kind: "chunk", text: "Second sentence. " });
+		await writeMessage(s, { kind: "chunk", text: "Third sentence." });
+		// Tiny pause to let some synthesis start.
+		await new Promise((r) => setTimeout(r, 30));
+		await writeMessage(s, { kind: "end" });
+		await consumer;
+
+		const e = fh.getEngine();
+		expect(e.calls.map((c) => c.text)).toEqual([
+			"First sentence.",
+			"Second sentence.",
+			"Third sentence.",
+		]);
+		expect(replies.some((m: any) => m.kind === "done")).toBe(true);
+
+		// One sink for the entire streaming connection — three sentences shared
+		// the same sample rate, so the daemon must not have torn down and
+		// re-opened the audio sink between sentences.
+		expect(__getSinkCountForTest()).toBe(1);
+	});
 
 	it("AC-10: client receives done before EOF", async () => {
 		const fh = makeFakeFactory({ playMs: 5 });

@@ -85,8 +85,17 @@ interface AudioSink {
 	stop(): void;
 }
 
+/** @internal Test-only counter — increments each time the silent fake sink
+ * is constructed. Used to assert that streaming reuses one sink. */
+let __testSinkCount = 0;
+/** @internal */
+export function __resetSinkCountForTest(): void { __testSinkCount = 0; }
+/** @internal */
+export function __getSinkCountForTest(): number { return __testSinkCount; }
+
 async function createAudioSink(sampleRate: number): Promise<AudioSink> {
 	if (process.env.TELLME_TEST_SILENT === "1") {
+		__testSinkCount++;
 		// Fake sink: count chunks, resolve `done` shortly after `end()`.
 		let chunkCount = 0;
 		let resolveDone: (() => void) | null = null;
@@ -352,12 +361,24 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 
 		if (item.streaming) {
 			// Streaming path: drain channel through SentenceBuffer, synthesize
-			// each emitted sentence, then flush residue.
+			// each emitted sentence, then flush residue. Reuse a single sink
+			// across all sentences sharing a sample rate so audio is
+			// contiguous (no per-sentence subprocess gap).
 			const channel = item.streaming;
 			const sb = new SentenceBuffer();
-			// Pick language eagerly (auto picks per-sentence below from the actual
-			// sentence text).
-			let chosenSampleRate: number | null = null;
+
+			let currentSink: AudioSink | null = null;
+			let currentRate: number | null = null;
+
+			const closeCurrentSink = async () => {
+				if (!currentSink) return;
+				const sink = currentSink;
+				currentSink = null;
+				currentRate = null;
+				if (activeSink === sink) activeSink = null;
+				sink.end();
+				await sink.done;
+			};
 
 			const synthesize = async (rawSentence: string) => {
 				if (channel.killed() || stopRequested || shuttingDown) return;
@@ -365,25 +386,66 @@ export async function startDaemon(opts: RunDaemonOptions = {}): Promise<DaemonHa
 				if (!text.trim()) return;
 				const language = merged.language === "auto" ? detectLanguage(text) : merged.language;
 				const sampleRate = engine.getSampleRate(language);
-				if (chosenSampleRate === null) chosenSampleRate = sampleRate;
-				await speakOne(item, text, language, sampleRate);
+
+				// Open or reopen sink if needed.
+				if (currentSink === null || currentRate !== sampleRate) {
+					if (currentSink !== null) await closeCurrentSink();
+					const sink = await createAudioSink(sampleRate);
+					currentSink = sink;
+					currentRate = sampleRate;
+					activeSink = sink;
+				}
+				const sink = currentSink;
+
+				try {
+					await engine.speak({
+						text,
+						language,
+						overrides: { voice: item.req.voice, speed: item.req.speed },
+						onChunk: (samples) => sink.write(samples),
+						shouldStop: () => stopRequested || shuttingDown || channel.killed(),
+					});
+				} catch (err) {
+					// Stop the live sink and propagate.
+					try { sink.stop(); } catch { /* ignore */ }
+					if (currentSink === sink) {
+						currentSink = null;
+						currentRate = null;
+					}
+					if (activeSink === sink) activeSink = null;
+					throw err;
+				}
 			};
 
-			for await (const chunk of channel) {
-				if (stopRequested || shuttingDown || channel.killed()) break;
-				const sentences = sb.push(chunk);
-				for (const s of sentences) {
-					await synthesize(s);
+			try {
+				for await (const chunk of channel) {
 					if (stopRequested || shuttingDown || channel.killed()) break;
+					const sentences = sb.push(chunk);
+					for (const s of sentences) {
+						await synthesize(s);
+						if (stopRequested || shuttingDown || channel.killed()) break;
+					}
 				}
-			}
 
-			// Channel ended (or killed). On a clean end, drain the residue.
-			if (!channel.killed() && !stopRequested && !shuttingDown) {
-				const residue = sb.flush();
-				if (residue) {
-					await synthesize(residue);
+				// Channel ended (or killed). On a clean end, drain the residue.
+				if (!channel.killed() && !stopRequested && !shuttingDown) {
+					const residue = sb.flush();
+					if (residue) {
+						await synthesize(residue);
+					}
 				}
+
+				// Close whatever sink is still open.
+				await closeCurrentSink();
+			} catch (err) {
+				// Make sure we don't leave a sink registered as active.
+				if (currentSink) {
+					try { currentSink.stop(); } catch { /* ignore */ }
+					if (activeSink === currentSink) activeSink = null;
+					currentSink = null;
+					currentRate = null;
+				}
+				throw err;
 			}
 
 			if (item.resolved) return;
