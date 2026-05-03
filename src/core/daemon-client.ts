@@ -186,8 +186,14 @@ export async function tryDaemonStreaming(args: CliArgs, stdin: NodeJS.ReadableSt
 	// further writes from the stdin forwarder must be silently absorbed.
 	let socketClosed = false;
 	socket.on("close", () => { socketClosed = true; });
-	// Swallow EPIPE-like errors so they don't bubble as unhandled.
-	socket.on("error", () => { /* handled via write callbacks */ });
+	// EPIPE/ECONNRESET arrive here when the daemon destroys the socket
+	// during stop; the write callbacks and `resolved=130` path already
+	// handle those. Anything else is unexpected — surface it.
+	socket.on("error", (err: any) => {
+		if (!isClosedWriteError(err)) {
+			console.error("Error: daemon socket error:", (err as Error).message);
+		}
+	});
 
 	// Forward stdin chunks → `chunk` frames.
 	const forwarder = (async () => {
