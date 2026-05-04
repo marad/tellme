@@ -31,7 +31,10 @@ const PLATFORM_PKG: Record<string, string> = {
 };
 
 type SherpaLib = ReturnType<typeof dlopen>;
-let cachedLib: SherpaLib | null = null;
+// Cache the in-flight Promise (not the resolved value) so concurrent callers —
+// e.g. createKokoroTtsFFI + createPiperTtsFFI under Promise.allSettled —
+// share a single dlopen / extraction pass.
+let libPromise: Promise<SherpaLib> | null = null;
 
 /**
  * Find the directory containing real on-disk copies of the sherpa-onnx shared
@@ -77,31 +80,39 @@ async function findLibDir(pkg: string): Promise<string> {
 	);
 }
 
-async function loadLib(): Promise<SherpaLib> {
-	if (cachedLib) return cachedLib;
+function loadLib(): Promise<SherpaLib> {
+	if (libPromise) return libPromise;
 
-	const key = `${process.platform}-${process.arch}`;
-	const pkg = PLATFORM_PKG[key];
-	if (!pkg) throw new Error(`sherpa-onnx FFI: unsupported platform ${key}`);
+	libPromise = (async () => {
+		const key = `${process.platform}-${process.arch}`;
+		const pkg = PLATFORM_PKG[key];
+		if (!pkg) throw new Error(`sherpa-onnx FFI: unsupported platform ${key}`);
 
-	const libDir = await findLibDir(pkg);
-	const libPath = join(libDir, `libsherpa-onnx-c-api.${suffix}`);
+		const libDir = await findLibDir(pkg);
+		const libPath = join(libDir, `libsherpa-onnx-c-api.${suffix}`);
 
-	if (process.env.TELLME_DEBUG_BACKEND === "1") {
-		console.error(`[sherpa-ffi] dlopen ${libPath}`);
-	}
-	cachedLib = dlopen(libPath, {
-		SherpaOnnxCreateOfflineTts: { args: [FFIType.ptr], returns: FFIType.ptr },
-		SherpaOnnxDestroyOfflineTts: { args: [FFIType.ptr], returns: FFIType.void },
-		SherpaOnnxOfflineTtsSampleRate: { args: [FFIType.ptr], returns: FFIType.i32 },
-		SherpaOnnxOfflineTtsNumSpeakers: { args: [FFIType.ptr], returns: FFIType.i32 },
-		SherpaOnnxOfflineTtsGenerate: {
-			args: [FFIType.ptr, FFIType.cstring, FFIType.i32, FFIType.f32],
-			returns: FFIType.ptr,
-		},
-		SherpaOnnxDestroyOfflineTtsGeneratedAudio: { args: [FFIType.ptr], returns: FFIType.void },
+		if (process.env.TELLME_DEBUG_BACKEND === "1") {
+			console.error(`[sherpa-ffi] dlopen ${libPath}`);
+		}
+		return dlopen(libPath, {
+			SherpaOnnxCreateOfflineTts: { args: [FFIType.ptr], returns: FFIType.ptr },
+			SherpaOnnxDestroyOfflineTts: { args: [FFIType.ptr], returns: FFIType.void },
+			SherpaOnnxOfflineTtsSampleRate: { args: [FFIType.ptr], returns: FFIType.i32 },
+			SherpaOnnxOfflineTtsNumSpeakers: { args: [FFIType.ptr], returns: FFIType.i32 },
+			SherpaOnnxOfflineTtsGenerate: {
+				args: [FFIType.ptr, FFIType.cstring, FFIType.i32, FFIType.f32],
+				returns: FFIType.ptr,
+			},
+			SherpaOnnxDestroyOfflineTtsGeneratedAudio: { args: [FFIType.ptr], returns: FFIType.void },
+		});
+	})().catch((err) => {
+		// Reset the cache so a retry can rebuild — without this, a transient
+		// failure during first init becomes permanent for the process lifetime.
+		libPromise = null;
+		throw err;
 	});
-	return cachedLib;
+
+	return libPromise;
 }
 
 // ---------- struct offsets (linux-x64 / darwin / arm64 — same LP64 layout) ----------
