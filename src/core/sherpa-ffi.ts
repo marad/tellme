@@ -96,9 +96,6 @@ function loadLib(): Promise<SherpaLib> {
 		const libDir = await findLibDir(pkg);
 		const libPath = join(libDir, `libsherpa-onnx-c-api.${suffix}`);
 
-		if (process.env.TELLME_DEBUG_BACKEND === "1") {
-			console.error(`[sherpa-ffi] dlopen ${libPath}`);
-		}
 		return dlopen(libPath, {
 			SherpaOnnxCreateOfflineTts: { args: [FFIType.ptr], returns: FFIType.ptr },
 			SherpaOnnxDestroyOfflineTts: { args: [FFIType.ptr], returns: FFIType.void },

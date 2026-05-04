@@ -26,9 +26,6 @@ async function getSherpa() {
 // otherwise crash on node.
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
 const useFfi = process.env.TELLME_FFI === "1" && isBun;
-if (process.env.TELLME_DEBUG_BACKEND === "1") {
-	console.error(`[tts-engine] backend=${useFfi ? "ffi" : "napi"} (isBun=${isBun})`);
-}
 
 export interface TtsResult {
 	samples: Float32Array;
@@ -138,9 +135,14 @@ export class TellMeTts {
 		if (kokoro.status === "fulfilled") this.kokoroTts = kokoro.value;
 		if (piper.status === "fulfilled") this.piperTts = piper.value;
 
-		if (process.env.TELLME_DEBUG_BACKEND === "1") {
-			if (kokoro.status === "rejected") console.error("[tts-engine] kokoro init failed:", kokoro.reason);
-			if (piper.status === "rejected") console.error("[tts-engine] piper init failed:", piper.reason);
+		// Surface init failures to stderr (daemon log captures them).  Without
+		// this, a fully-failed init throws "No TTS models available" with no
+		// hint about which engine broke or why.
+		if (kokoro.status === "rejected") {
+			console.error("[tts-engine] kokoro init failed:", kokoro.reason);
+		}
+		if (piper.status === "rejected") {
+			console.error("[tts-engine] piper init failed:", piper.reason);
 		}
 
 		if (!this.kokoroTts && !this.piperTts) {
