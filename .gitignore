@@ -1,6 +1,7 @@
 node_modules/
 dist/
 vendor/
+*.generated.ts
 *.js.map
 .tellme/
 .claude/tellme.json

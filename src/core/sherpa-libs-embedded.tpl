@@ -1,17 +1,15 @@
 /**
  * Embedded sherpa-onnx shared libraries for `bun build --compile`.
  *
+ * THIS IS A TEMPLATE — `make vendor-libs PLATFORM=<plat>` materializes
+ * src/core/sherpa-libs-embedded.generated.ts from this file by substituting
+ * __PLATFORM__ and __LIBEXT__.  The generated file is gitignored; it must
+ * exist at compile time but not at dev / test time (bun run falls back to
+ * createRequire-based lookup when the import fails).
+ *
  * Static `with { type: "file" }` imports cause Bun to embed the file into the
  * compiled binary; at runtime the import returns a /$bunfs/... virtual path.
  * Under `bun run` (no compile), the same imports return the real on-disk path.
- *
- * The vendored libraries must be present at build time.  Build script:
- *
- *   make vendor-libs   # copies node_modules/sherpa-onnx-<plat>/*.so into vendor/
- *   make compile       # bun build --compile ... src/cli/index.ts
- *
- * Currently linux-x64 only — extending to darwin/arm64/windows requires
- * platform-specific embed modules selected at build time.
  */
 
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -19,11 +17,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 // @ts-expect-error binary asset import — bun-only syntax
-import LIB_C_API_PATH from "../../vendor/sherpa-libs/linux-x64/libsherpa-onnx-c-api.so" with { type: "file" };
+import LIB_C_API_PATH from "../../vendor/sherpa-libs/__PLATFORM__/libsherpa-onnx-c-api.__LIBEXT__" with { type: "file" };
 // @ts-expect-error binary asset import
-import LIB_ONNX_PATH from "../../vendor/sherpa-libs/linux-x64/libonnxruntime.so" with { type: "file" };
+import LIB_ONNX_PATH from "../../vendor/sherpa-libs/__PLATFORM__/libonnxruntime.__LIBEXT__" with { type: "file" };
 // @ts-expect-error binary asset import
-import LIB_CXX_PATH from "../../vendor/sherpa-libs/linux-x64/libsherpa-onnx-cxx-api.so" with { type: "file" };
+import LIB_CXX_PATH from "../../vendor/sherpa-libs/__PLATFORM__/libsherpa-onnx-cxx-api.__LIBEXT__" with { type: "file" };
 
 interface EmbeddedFile {
 	name: string;
@@ -31,12 +29,12 @@ interface EmbeddedFile {
 }
 
 const EMBEDDED: EmbeddedFile[] = [
-	{ name: "libsherpa-onnx-c-api.so", embeddedPath: LIB_C_API_PATH },
-	{ name: "libonnxruntime.so", embeddedPath: LIB_ONNX_PATH },
-	{ name: "libsherpa-onnx-cxx-api.so", embeddedPath: LIB_CXX_PATH },
+	{ name: "libsherpa-onnx-c-api.__LIBEXT__", embeddedPath: LIB_C_API_PATH },
+	{ name: "libonnxruntime.__LIBEXT__", embeddedPath: LIB_ONNX_PATH },
+	{ name: "libsherpa-onnx-cxx-api.__LIBEXT__", embeddedPath: LIB_CXX_PATH },
 ];
 
-const VERSION_TAG = "1.12.38-linux-x64";
+const VERSION_TAG = "__VERSION_TAG__";
 
 /**
  * Resolve a directory containing real on-disk copies of the sherpa libs.

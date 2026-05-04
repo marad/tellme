@@ -28,6 +28,17 @@ BUN_TARGET_darwin-x64   := bun-darwin-x64
 BUN_TARGET_darwin-arm64 := bun-darwin-arm64
 BUN_TARGET := $(BUN_TARGET_$(PLATFORM))
 
+# Map platform → shared-library file extension
+LIBEXT_linux-x64    := so
+LIBEXT_linux-arm64  := so
+LIBEXT_darwin-x64   := dylib
+LIBEXT_darwin-arm64 := dylib
+LIBEXT := $(LIBEXT_$(PLATFORM))
+
+# sherpa-onnx-node version, used for the cache directory name so users
+# rebuilding after a sherpa upgrade don't reuse a stale extraction.
+SHERPA_VERSION := $(shell node -e "console.log(require('./node_modules/sherpa-onnx-node/package.json').version)" 2>/dev/null || echo unknown)
+
 CLAUDE_COMMANDS_DIR ?= $(HOME)/.claude/commands
 OPENCODE_COMMANDS_DIR ?= $(HOME)/.config/opencode/commands
 
@@ -75,7 +86,7 @@ test: build
 # optional dependency; cross-arch builds need an explicit `npm install
 # $(SHERPA_PKG) --no-save`).
 vendor-libs:
-	@if [ -z "$(SHERPA_PKG)" ]; then \
+	@if [ -z "$(SHERPA_PKG)" ] || [ -z "$(LIBEXT)" ]; then \
 		echo "Unsupported PLATFORM=$(PLATFORM)"; exit 1; \
 	fi
 	@if [ ! -d node_modules/$(SHERPA_PKG) ]; then \
@@ -83,10 +94,18 @@ vendor-libs:
 		exit 1; \
 	fi
 	mkdir -p vendor/sherpa-libs/$(PLATFORM)
-	cp node_modules/$(SHERPA_PKG)/libsherpa-onnx-c-api.* vendor/sherpa-libs/$(PLATFORM)/
-	cp node_modules/$(SHERPA_PKG)/libsherpa-onnx-cxx-api.* vendor/sherpa-libs/$(PLATFORM)/
-	cp node_modules/$(SHERPA_PKG)/libonnxruntime.* vendor/sherpa-libs/$(PLATFORM)/
+	cp node_modules/$(SHERPA_PKG)/libsherpa-onnx-c-api.$(LIBEXT) vendor/sherpa-libs/$(PLATFORM)/
+	cp node_modules/$(SHERPA_PKG)/libsherpa-onnx-cxx-api.$(LIBEXT) vendor/sherpa-libs/$(PLATFORM)/
+	cp node_modules/$(SHERPA_PKG)/libonnxruntime.$(LIBEXT) vendor/sherpa-libs/$(PLATFORM)/
 	@echo "vendor/sherpa-libs/$(PLATFORM)/ populated."
+	@$(MAKE) --no-print-directory src/core/sherpa-libs-embedded.generated.ts
+
+src/core/sherpa-libs-embedded.generated.ts: src/core/sherpa-libs-embedded.tpl Makefile
+	sed -e 's/__PLATFORM__/$(PLATFORM)/g' \
+	    -e 's/__LIBEXT__/$(LIBEXT)/g' \
+	    -e 's/__VERSION_TAG__/$(SHERPA_VERSION)-$(PLATFORM)/g' \
+	    src/core/sherpa-libs-embedded.tpl > $@
+	@echo "$@ → PLATFORM=$(PLATFORM) LIBEXT=$(LIBEXT) VERSION=$(SHERPA_VERSION)"
 
 compile: vendor-libs
 	@if [ -z "$(BUN_TARGET)" ]; then \
@@ -100,4 +119,4 @@ compile: vendor-libs
 	@ls -lh dist/tellme
 
 clean:
-	rm -rf node_modules dist vendor
+	rm -rf node_modules dist vendor src/core/sherpa-libs-embedded.generated.ts
