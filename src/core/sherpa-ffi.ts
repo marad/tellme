@@ -204,7 +204,11 @@ function makeInstance(lib: SherpaLib, ttsHandle: number, pin: StringPin): TtsIns
 			if (!alive) return;
 			alive = false;
 			lib.symbols.SherpaOnnxDestroyOfflineTts(ttsHandle);
-			// drop the pin so cstrings can be GC'd
+			// Force the closure to capture `pin` so its cstring buffers stay
+			// alive for the lifetime of this instance.  Without this reference
+			// no method captures pin and it becomes GC-eligible as soon as the
+			// outer create call returns — risking a UAF if sherpa retained
+			// pointers into the config struct rather than copying.
 			void pin;
 		},
 	};
