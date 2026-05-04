@@ -35,6 +35,7 @@ import { daemonStart, daemonStop, daemonStatus, ensureDaemonRunning } from "./da
 import { shouldUseDaemon } from "./daemon-routing.js";
 import { existsSync } from "node:fs";
 import { getSocketPath } from "../core/daemon-paths.js";
+import { isCompiledBinary } from "../core/runtime.js";
 
 function printUsage() {
 	console.log(`
@@ -117,9 +118,7 @@ async function main() {
 	//   node bin/tellme.js foo   → argv = [node, .../tellme.js, foo] → userArgs[0] = foo
 	//   bun src/cli/index.ts foo → argv = [bun, .../index.ts, foo]   → userArgs[0] = foo
 	//   ./tellme foo (compiled)  → argv = [./tellme, foo]            → userArgs[0] = foo
-	const userArgvStart =
-		process.argv[1] && existsSync(process.argv[1]) ? 2 : 1;
-	const userArgs = process.argv.slice(userArgvStart);
+	const userArgs = process.argv.slice(isCompiledBinary() ? 1 : 2);
 
 	// Hidden subcommand used by `tellme daemon start` to fork the daemon.
 	// MUST short-circuit before any normal CLI parsing or daemon routing —

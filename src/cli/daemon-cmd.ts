@@ -9,20 +9,10 @@ import { dirname, join } from "node:path";
 import { PROTOCOL_VERSION } from "../core/daemon-protocol.js";
 import { ensureDaemonDir, getLogPath, getPidPath, getSocketPath } from "../core/daemon-paths.js";
 import { connectAndSend } from "../core/daemon-client.js";
+import { isCompiledBinary } from "../core/runtime.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-
-/**
- * When running under `node bin/tellme.js` or `bun run`, we need to re-exec the
- * script entrypoint.  When running from a `bun build --compile` binary, the
- * /$bunfs/ virtual path is not a real file the OS can spawn — instead we
- * re-exec process.execPath with no script argument; cli/index.ts detects the
- * `__daemon-main__` flag at argv[1] in that case.
- */
-function isCompiledBinary(): boolean {
-	return __filename.includes("/$bunfs/") || __filename.startsWith("$bunfs:");
-}
 
 function findBinPath(): string {
 	// src/cli/daemon-cmd.ts → ../../bin/tellme.js

@@ -9,6 +9,7 @@
 import { createServer, createConnection, type Server, type Socket } from "node:net";
 import { chmodSync, existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { loadConfig, type TellMeConfig } from "./config.js";
+import { isBun, isCompiledBinary } from "./runtime.js";
 import { TellMeTts } from "./tts-engine.js";
 import { detectLanguage } from "./language-detect.js";
 import { prepareForSpeech, splitIntoChunks } from "./text-prep.js";
@@ -247,8 +248,7 @@ export interface RunDaemonOptions {
  * `await runDaemon()` shape used from `__daemon-main__`).
  */
 export async function runDaemon(opts: RunDaemonOptions = {}): Promise<void> {
-	const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
-	const useFfi = process.env.TELLME_FFI === "1" && isBun;
+	const useFfi = isBun && (isCompiledBinary() || process.env.TELLME_FFI === "1");
 	console.error(
 		`[${new Date().toISOString()}] daemon starting pid=${process.pid} ` +
 			`runtime=${isBun ? "bun" : "node"} backend=${useFfi ? "ffi" : "napi"}`,

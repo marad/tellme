@@ -8,6 +8,7 @@ import { getKokoroPaths, getPiperPlPaths } from "./model-manager.js";
 import { trimSilence, generateSilence } from "./audio-player.js";
 import type { DetectedLanguage } from "./language-detect.js";
 import type { SpeechChunk } from "./text-prep.js";
+import { isBun, isCompiledBinary } from "./runtime.js";
 
 // sherpa-onnx-node loaded dynamically to handle optional dep
 let sherpa: any = null;
@@ -20,12 +21,10 @@ async function getSherpa() {
 	return sherpa;
 }
 
-// TELLME_FFI=1 routes via bun:ffi instead of the sherpa-onnx-node N-API addon.
-// Required for `bun build --compile` since the N-API path can't be embedded.
-// Only honored under bun — the import("bun:ffi") inside sherpa-ffi.ts would
-// otherwise crash on node.
-const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
-const useFfi = process.env.TELLME_FFI === "1" && isBun;
+// FFI is the only viable path in compiled binaries (sherpa-onnx-node is
+// `--external`'d, so the N-API addon isn't present).  In dev / `bun run` the
+// N-API addon is the default and TELLME_FFI=1 opts in to FFI for testing.
+const useFfi = isBun && (isCompiledBinary() || process.env.TELLME_FFI === "1");
 
 export interface TtsResult {
 	samples: Float32Array;
