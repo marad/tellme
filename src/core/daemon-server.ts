@@ -247,6 +247,13 @@ export interface RunDaemonOptions {
  * `await runDaemon()` shape used from `__daemon-main__`).
  */
 export async function runDaemon(opts: RunDaemonOptions = {}): Promise<void> {
+	const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
+	const useFfi = process.env.TELLME_FFI === "1" && isBun;
+	console.error(
+		`[${new Date().toISOString()}] daemon starting pid=${process.pid} ` +
+			`runtime=${isBun ? "bun" : "node"} backend=${useFfi ? "ffi" : "napi"}`,
+	);
+
 	const handle = await startDaemon({ ...opts, installSignalHandlers: opts.installSignalHandlers ?? true });
 	await new Promise<void>((resolve) => {
 		(handle as any).__setExitResolve(resolve);

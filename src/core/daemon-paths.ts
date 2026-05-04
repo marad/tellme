@@ -23,6 +23,10 @@ export function getPidPath(): string {
 	return join(getDaemonDir(), "daemon.pid");
 }
 
+export function getLogPath(): string {
+	return join(getDaemonDir(), "daemon.log");
+}
+
 export function ensureDaemonDir(): void {
 	const dir = getDaemonDir();
 	if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });

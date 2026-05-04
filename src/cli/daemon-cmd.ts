@@ -3,11 +3,11 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, openSync, readFileSync, unlinkSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { PROTOCOL_VERSION } from "../core/daemon-protocol.js";
-import { getPidPath, getSocketPath } from "../core/daemon-paths.js";
+import { ensureDaemonDir, getLogPath, getPidPath, getSocketPath } from "../core/daemon-paths.js";
 import { connectAndSend } from "../core/daemon-client.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -66,9 +66,15 @@ export async function ensureDaemonRunning(opts: EnsureDaemonOptions = {}): Promi
 		const args = isCompiledBinary()
 			? ["__daemon-main__"]
 			: [findBinPath(), "__daemon-main__"];
+
+		// Capture daemon stdout/stderr to a log file. Without this we lose
+		// every backend init message, sherpa-ffi dlopen path, and any crash
+		// trace from the detached process.
+		ensureDaemonDir();
+		const logFd = openSync(getLogPath(), "a");
 		const proc = spawn(process.execPath, args, {
 			detached: true,
-			stdio: "ignore",
+			stdio: ["ignore", logFd, logFd],
 		});
 		proc.unref();
 		proc.once("exit", () => { earlyExit = true; });
