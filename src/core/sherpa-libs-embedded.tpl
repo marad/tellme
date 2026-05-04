@@ -12,7 +12,7 @@
  * Under `bun run` (no compile), the same imports return the real on-disk path.
  */
 
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -57,9 +57,14 @@ export async function extractEmbeddedLibs(): Promise<string> {
 	for (const f of EMBEDDED) {
 		const dst = join(cacheDir, f.name);
 		if (existsSync(dst)) continue;
+		// Write to a sibling tmp file then rename — rename is atomic on the same
+		// filesystem, so a concurrent first-run from a second process can't
+		// observe a partial file.
+		const tmp = `${dst}.${process.pid}.tmp`;
 		const bytes = await readEmbedded(f.embeddedPath);
-		writeFileSync(dst, bytes);
-		chmodSync(dst, 0o755);
+		writeFileSync(tmp, bytes);
+		chmodSync(tmp, 0o755);
+		renameSync(tmp, dst);
 	}
 
 	return cacheDir;
