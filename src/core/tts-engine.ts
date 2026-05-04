@@ -20,6 +20,16 @@ async function getSherpa() {
 	return sherpa;
 }
 
+// TELLME_FFI=1 routes via bun:ffi instead of the sherpa-onnx-node N-API addon.
+// Required for `bun build --compile` since the N-API path can't be embedded.
+// Only honored under bun — the import("bun:ffi") inside sherpa-ffi.ts would
+// otherwise crash on node.
+const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
+const useFfi = process.env.TELLME_FFI === "1" && isBun;
+if (process.env.TELLME_DEBUG_BACKEND === "1") {
+	console.error(`[tts-engine] backend=${useFfi ? "ffi" : "napi"} (isBun=${isBun})`);
+}
+
 export interface TtsResult {
 	samples: Float32Array;
 	sampleRate: number;
@@ -33,6 +43,11 @@ export interface TtsInstance {
 
 /** Create a Kokoro TTS instance for English */
 export async function createKokoroTts(config: TellMeConfig): Promise<TtsInstance> {
+	if (useFfi) {
+		const { createKokoroTtsFFI } = await import("./sherpa-ffi.js");
+		return createKokoroTtsFFI(config);
+	}
+
 	const paths = getKokoroPaths(config);
 	if (!paths) throw new Error("Kokoro model not downloaded. Run: tellme --download");
 
@@ -67,6 +82,11 @@ export async function createKokoroTts(config: TellMeConfig): Promise<TtsInstance
 
 /** Create a Piper TTS instance for Polish */
 export async function createPiperTts(config: TellMeConfig): Promise<TtsInstance> {
+	if (useFfi) {
+		const { createPiperTtsFFI } = await import("./sherpa-ffi.js");
+		return createPiperTtsFFI(config);
+	}
+
 	const paths = getPiperPlPaths(config);
 	if (!paths) throw new Error("Piper PL model not downloaded. Run: tellme --download");
 
@@ -117,6 +137,11 @@ export class TellMeTts {
 
 		if (kokoro.status === "fulfilled") this.kokoroTts = kokoro.value;
 		if (piper.status === "fulfilled") this.piperTts = piper.value;
+
+		if (process.env.TELLME_DEBUG_BACKEND === "1") {
+			if (kokoro.status === "rejected") console.error("[tts-engine] kokoro init failed:", kokoro.reason);
+			if (piper.status === "rejected") console.error("[tts-engine] piper init failed:", piper.reason);
+		}
 
 		if (!this.kokoroTts && !this.piperTts) {
 			throw new Error("No TTS models available. Run: tellme --download");

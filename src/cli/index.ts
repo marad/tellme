@@ -113,11 +113,19 @@ async function readStdin(): Promise<string> {
 }
 
 async function main() {
+	// User args, normalized across runtime modes:
+	//   node bin/tellme.js foo   → argv = [node, .../tellme.js, foo] → userArgs[0] = foo
+	//   bun src/cli/index.ts foo → argv = [bun, .../index.ts, foo]   → userArgs[0] = foo
+	//   ./tellme foo (compiled)  → argv = [./tellme, foo]            → userArgs[0] = foo
+	const userArgvStart =
+		process.argv[1] && existsSync(process.argv[1]) ? 2 : 1;
+	const userArgs = process.argv.slice(userArgvStart);
+
 	// Hidden subcommand used by `tellme daemon start` to fork the daemon.
 	// MUST short-circuit before any normal CLI parsing or daemon routing —
 	// otherwise the daemon process would itself try to talk to a daemon.
-	if (process.argv[2] === "__daemon-main__") {
-		if (process.argv.length > 3) {
+	if (userArgs[0] === "__daemon-main__") {
+		if (userArgs.length > 1) {
 			console.error("Error: __daemon-main__ takes no arguments");
 			process.exit(1);
 		}
@@ -126,8 +134,8 @@ async function main() {
 	}
 
 	// Daemon control subcommands.
-	if (process.argv[2] === "daemon") {
-		const sub = process.argv[3];
+	if (userArgs[0] === "daemon") {
+		const sub = userArgs[1];
 		if (sub === "start") process.exit(await daemonStart());
 		else if (sub === "stop") process.exit(await daemonStop());
 		else if (sub === "status") process.exit(await daemonStatus());
@@ -137,7 +145,7 @@ async function main() {
 		}
 	}
 
-	const args = parseArgs(process.argv.slice(2));
+	const args = parseArgs(userArgs);
 
 	if (args.help) { printUsage(); process.exit(0); }
 

@@ -1,0 +1,238 @@
+/**
+ * sherpa-onnx OfflineTts via bun:ffi.
+ *
+ * Drop-in replacement for the sherpa-onnx-node N-API path used by tts-engine.ts.
+ * Activated by setting TELLME_FFI=1.  Only loaded under bun (the FFI module
+ * does not exist in node), so this file is dynamically imported.
+ *
+ * Struct layouts mirror sherpa-onnx v1.12.x C API.  See
+ * experiments/bun-ffi-spike/spike.ts for the offset reference table.
+ */
+
+import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+// @ts-expect-error bun:ffi types unresolved at edit time; bun resolves them at runtime
+import { dlopen, FFIType, ptr, read, suffix, toArrayBuffer } from "bun:ffi";
+
+import { resolveVoiceId, type TellMeConfig } from "./config.js";
+import { getKokoroPaths, getPiperPlPaths } from "./model-manager.js";
+import type { TtsInstance } from "./tts-engine.js";
+
+// ---------- shared lib loader (lazy, single instance per process) ----------
+
+const PLATFORM_PKG: Record<string, string> = {
+	"linux-x64": "sherpa-onnx-linux-x64",
+	"linux-arm64": "sherpa-onnx-linux-arm64",
+	"darwin-arm64": "sherpa-onnx-darwin-arm64",
+	"darwin-x64": "sherpa-onnx-darwin-x64",
+	"win32-x64": "sherpa-onnx-win-x64",
+	"win32-ia32": "sherpa-onnx-win-ia32",
+};
+
+type SherpaLib = ReturnType<typeof dlopen>;
+let cachedLib: SherpaLib | null = null;
+
+/**
+ * Find the directory containing real on-disk copies of the sherpa-onnx shared
+ * libraries for this platform.  Lookup order:
+ *   1. TELLME_SHERPA_LIB_DIR env var (explicit override).
+ *   2. Embedded libs extracted to ~/.cache/tellme/sherpa-libs/<ver>/
+ *      (only present in builds that vendored vendor/sherpa-libs/<plat>/).
+ *   3. node_modules/<pkg>/ resolved from import.meta.url (dev / `bun run`).
+ *   4. node_modules/<pkg>/ next to process.execPath (compile-time fallback
+ *      where the platform package was shipped beside the binary).
+ *   5. node_modules/<pkg>/ under CWD.
+ */
+async function findLibDir(pkg: string): Promise<string> {
+	const envDir = process.env.TELLME_SHERPA_LIB_DIR;
+	if (envDir && existsSync(envDir)) return envDir;
+
+	try {
+		const embedded = await import("./sherpa-libs-embedded.js");
+		return await embedded.extractEmbeddedLibs();
+	} catch {
+		// not built with embedded libs (vendor/ empty at build time)
+	}
+
+	try {
+		const require = createRequire(import.meta.url);
+		return dirname(require.resolve(`${pkg}/package.json`));
+	} catch {
+		// /$bunfs/ has no node_modules — fall through
+	}
+
+	const candidates = [
+		join(dirname(process.execPath), "node_modules", pkg),
+		join(dirname(process.execPath), pkg),
+		join(process.cwd(), "node_modules", pkg),
+	];
+	for (const c of candidates) {
+		if (existsSync(join(c, `libsherpa-onnx-c-api.${suffix}`))) return c;
+	}
+
+	throw new Error(
+		`sherpa-onnx FFI: cannot locate ${pkg}.  Set TELLME_SHERPA_LIB_DIR or place the ` +
+			`platform package next to the binary.  Searched: ${candidates.join(", ")}`,
+	);
+}
+
+async function loadLib(): Promise<SherpaLib> {
+	if (cachedLib) return cachedLib;
+
+	const key = `${process.platform}-${process.arch}`;
+	const pkg = PLATFORM_PKG[key];
+	if (!pkg) throw new Error(`sherpa-onnx FFI: unsupported platform ${key}`);
+
+	const libDir = await findLibDir(pkg);
+	const libPath = join(libDir, `libsherpa-onnx-c-api.${suffix}`);
+
+	if (process.env.TELLME_DEBUG_BACKEND === "1") {
+		console.error(`[sherpa-ffi] dlopen ${libPath}`);
+	}
+	cachedLib = dlopen(libPath, {
+		SherpaOnnxCreateOfflineTts: { args: [FFIType.ptr], returns: FFIType.ptr },
+		SherpaOnnxDestroyOfflineTts: { args: [FFIType.ptr], returns: FFIType.void },
+		SherpaOnnxOfflineTtsSampleRate: { args: [FFIType.ptr], returns: FFIType.i32 },
+		SherpaOnnxOfflineTtsNumSpeakers: { args: [FFIType.ptr], returns: FFIType.i32 },
+		SherpaOnnxOfflineTtsGenerate: {
+			args: [FFIType.ptr, FFIType.cstring, FFIType.i32, FFIType.f32],
+			returns: FFIType.ptr,
+		},
+		SherpaOnnxDestroyOfflineTtsGeneratedAudio: { args: [FFIType.ptr], returns: FFIType.void },
+	});
+	return cachedLib;
+}
+
+// ---------- struct offsets (linux-x64 / darwin / arm64 — same LP64 layout) ----------
+
+const CONFIG_SIZE = 448;
+const OFF_VITS = 0; // SherpaOnnxOfflineTtsModelConfig.vits
+const OFF_NUM_THREADS = 56;
+const OFF_DEBUG = 60;
+const OFF_PROVIDER = 64;
+const OFF_KOKORO = 128;
+const OFF_MAX_NUM_SENTENCES = 424;
+const OFF_SILENCE_SCALE = 440;
+
+const GA_SAMPLES = 0;
+const GA_N = 8;
+
+// ---------- helpers ----------
+
+class StringPin {
+	private readonly buffers: Buffer[] = [];
+	cstr(s: string): bigint {
+		const b = Buffer.from(s + "\0", "utf-8");
+		this.buffers.push(b);
+		return BigInt(ptr(b));
+	}
+}
+
+function buildKokoroConfig(paths: NonNullable<ReturnType<typeof getKokoroPaths>>, pin: StringPin): Buffer {
+	const cfg = Buffer.alloc(CONFIG_SIZE);
+	cfg.writeBigUInt64LE(pin.cstr(paths.model), OFF_KOKORO + 0);
+	cfg.writeBigUInt64LE(pin.cstr(paths.voices), OFF_KOKORO + 8);
+	cfg.writeBigUInt64LE(pin.cstr(paths.tokens), OFF_KOKORO + 16);
+	cfg.writeBigUInt64LE(pin.cstr(paths.dataDir), OFF_KOKORO + 24);
+	cfg.writeFloatLE(1.0, OFF_KOKORO + 32); // length_scale
+	cfg.writeInt32LE(4, OFF_NUM_THREADS);
+	cfg.writeInt32LE(0, OFF_DEBUG);
+	cfg.writeBigUInt64LE(pin.cstr("cpu"), OFF_PROVIDER);
+	cfg.writeInt32LE(1, OFF_MAX_NUM_SENTENCES);
+	cfg.writeFloatLE(0.2, OFF_SILENCE_SCALE);
+	return cfg;
+}
+
+function buildVitsConfig(paths: NonNullable<ReturnType<typeof getPiperPlPaths>>, pin: StringPin): Buffer {
+	const cfg = Buffer.alloc(CONFIG_SIZE);
+	// vits @ OFF_VITS=0
+	cfg.writeBigUInt64LE(pin.cstr(paths.model), OFF_VITS + 0);
+	// lexicon @8 left null
+	cfg.writeBigUInt64LE(pin.cstr(paths.tokens), OFF_VITS + 16);
+	cfg.writeBigUInt64LE(pin.cstr(paths.dataDir), OFF_VITS + 24);
+	// noise_scale / noise_scale_w / length_scale: leave 0 → sherpa applies
+	// VITS defaults internally (0.667 / 0.8 / 1.0) when zero.  The N-API path
+	// behaves the same.
+	cfg.writeInt32LE(4, OFF_NUM_THREADS);
+	cfg.writeInt32LE(0, OFF_DEBUG);
+	cfg.writeBigUInt64LE(pin.cstr("cpu"), OFF_PROVIDER);
+	cfg.writeInt32LE(2, OFF_MAX_NUM_SENTENCES);
+	cfg.writeFloatLE(0.2, OFF_SILENCE_SCALE);
+	return cfg;
+}
+
+function makeInstance(lib: SherpaLib, ttsHandle: number, pin: StringPin): TtsInstance {
+	const sampleRate = lib.symbols.SherpaOnnxOfflineTtsSampleRate(ttsHandle);
+	let alive = true;
+
+	return {
+		sampleRate,
+		generate(text: string, speed = 1.0, speakerId = 0): Float32Array {
+			if (!alive) throw new Error("TtsInstance: free() already called");
+			if (!text) return new Float32Array(0);
+
+			const textBuf = Buffer.from(text + "\0", "utf-8");
+			const audio = lib.symbols.SherpaOnnxOfflineTtsGenerate(ttsHandle, textBuf, speakerId, speed);
+			if (!audio) throw new Error("SherpaOnnxOfflineTtsGenerate returned null");
+
+			const samplesPtr = read.ptr(audio, GA_SAMPLES);
+			const n = read.i32(audio, GA_N);
+
+			// Copy out — the underlying buffer is owned by sherpa and freed on Destroy.
+			const view = new Float32Array(toArrayBuffer(samplesPtr, 0, n * 4));
+			const out = new Float32Array(n);
+			out.set(view);
+
+			lib.symbols.SherpaOnnxDestroyOfflineTtsGeneratedAudio(audio);
+			return out;
+		},
+		free(): void {
+			if (!alive) return;
+			alive = false;
+			lib.symbols.SherpaOnnxDestroyOfflineTts(ttsHandle);
+			// drop the pin so cstrings can be GC'd
+			void pin;
+		},
+	};
+}
+
+// ---------- public factories ----------
+
+export async function createKokoroTtsFFI(config: TellMeConfig): Promise<TtsInstance> {
+	const paths = getKokoroPaths(config);
+	if (!paths) throw new Error("Kokoro model not downloaded. Run: tellme --download");
+
+	const lib = await loadLib();
+	const pin = new StringPin();
+	const cfg = buildKokoroConfig(paths, pin);
+
+	const handle = lib.symbols.SherpaOnnxCreateOfflineTts(ptr(cfg));
+	if (!handle) throw new Error("SherpaOnnxCreateOfflineTts (kokoro) returned null");
+
+	const inst = makeInstance(lib, handle, pin);
+
+	// Wrap generate() to apply the configured EN voice when caller doesn't override.
+	const defaultSid = resolveVoiceId(config.enVoice);
+	const baseGenerate = inst.generate.bind(inst);
+	inst.generate = (text: string, speed = config.speed, speakerId?: number) =>
+		baseGenerate(text, speed, speakerId ?? defaultSid);
+	return inst;
+}
+
+export async function createPiperTtsFFI(config: TellMeConfig): Promise<TtsInstance> {
+	const paths = getPiperPlPaths(config);
+	if (!paths) throw new Error("Piper PL model not downloaded. Run: tellme --download");
+
+	const lib = await loadLib();
+	const pin = new StringPin();
+	const cfg = buildVitsConfig(paths, pin);
+
+	const handle = lib.symbols.SherpaOnnxCreateOfflineTts(ptr(cfg));
+	if (!handle) throw new Error("SherpaOnnxCreateOfflineTts (vits) returned null");
+
+	const inst = makeInstance(lib, handle, pin);
+	const baseGenerate = inst.generate.bind(inst);
+	inst.generate = (text: string, speed = config.speed) => baseGenerate(text, speed, 0);
+	return inst;
+}
